@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
-from io import BytesIO
 from github import Github
 
 # ===============================
@@ -53,7 +52,6 @@ def push_to_github(local_file, commit_message="Update Excel via Streamlit"):
         content = f.read()
 
     try:
-        # جلب الملف الحالي في الريبو
         contents = repo.get_contents(FILE_PATH, ref=BRANCH)
         repo.update_file(
             path=FILE_PATH,
@@ -76,7 +74,7 @@ st.title("🛠 CMMS - تعديل وإضافة بيانات (GitHub)")
 
 sheets = load_sheets()
 
-tab1, tab2 = st.tabs(["عرض وتعديل شيت", "إضافة صف جديد", "إضافة عمود جديد"])
+tab1, tab2, tab3 = st.tabs(["عرض وتعديل شيت", "إضافة صف جديد", "إضافة عمود جديد"])
 
 # ===============================
 # Tab 1: تعديل البيانات
@@ -117,7 +115,7 @@ with tab2:
 # ===============================
 # Tab 3: إضافة عمود جديد
 # ===============================
-with tab2:
+with tab3:
     st.subheader("🆕 إضافة عمود جديد")
     sheet_name_col = st.selectbox("اختر الشيت لإضافة عمود:", list(sheets.keys()), key="add_col_sheet")
     df_col = sheets[sheet_name_col]
