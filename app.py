@@ -90,7 +90,13 @@ with tab1:
         with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
             for name, sh in sheets.items():
                 sh.to_excel(writer, sheet_name=name, index=False)
-        push_to_github(LOCAL_FILE, commit_message=f"Edit sheet {sheet_name}")
+        push_to_github(LOCAL_FILE, commit_message=f"Add new row to {sheet_name_add}")
+st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح!")
+
+# 🔁 إعادة تحميل الشيت لعرض البيانات الجديدة فورًا
+sheets = load_sheets()
+st.dataframe(sheets[sheet_name_add])
+
 
 # Tab 2: إضافة صف جديد
 with tab2:
