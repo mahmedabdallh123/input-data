@@ -126,44 +126,49 @@ with tab2:
         new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
-
-        # إنشاء صف جديد
         new_row_df = pd.DataFrame([new_data]).astype(str)
 
-        # نحاول نحول Min_Tones و Max_Tones لأرقام (عشان المقارنة)
+        # محاولة إيجاد مكان الإدراج بناءً على الأعمدة "from" و "to"
         try:
-            new_min = float(str(new_data.get("Min_Tones", "")).strip() or 0)
-            new_max = float(str(new_data.get("Max_Tones", "")).strip() or 0)
-        except ValueError:
-            new_min, new_max = 0, 0
+            start_val = str(new_data.get("from", "")).strip()
+            end_val = str(new_data.get("to", "")).strip()
 
-        # مكان الإدراج الافتراضي: آخر الجدول
-        insert_pos = len(df_add)
+            # البحث عن آخر صف له نفس الرينج بالضبط
+            mask = (
+                df_add["from"].astype(str).str.strip() == start_val
+            ) & (
+                df_add["to"].astype(str).str.strip() == end_val
+            )
 
-        # نبحث عن أول صف مطابق للرنج الحالي
-        for i in range(len(df_add)):
-            try:
-                min_val = float(str(df_add.loc[i, "Min_Tones"]).strip() or 0)
-                max_val = float(str(df_add.loc[i, "Max_Tones"]).strip() or 0)
-                # لو الرينج الحالي هو نفس الرينج اللي المستخدم أدخله
-                if min_val == new_min and max_val == new_max:
-                    insert_pos = i + 1  # أضف الصف بعده مباشرة
-            except Exception:
-                continue
+            if mask.any():
+                # بعد آخر صف بنفس الرينج
+                insert_index = mask[mask].index[-1] + 1
+            else:
+                # لو الرينج مش موجود، إدراجه في مكانه حسب الترتيب
+                df_add["from_num"] = pd.to_numeric(df_add["from"], errors="coerce")
+                insert_index = (df_add["from_num"] < float(start_val)).sum()
+                df_add = df_add.drop(columns=["from_num"])
+        except Exception as e:
+            insert_index = len(df_add)
 
-        # تقسيم الجدول وإدراج الصف الجديد في مكانه الصحيح
-        df_top = df_add.iloc[:insert_pos]
-        df_bottom = df_add.iloc[insert_pos:]
-        df_new = pd.concat([df_top, new_row_df, df_bottom], ignore_index=True)
+        # إدراج الصف الجديد في المكان المحدد
+        df_add = pd.concat(
+            [df_add.iloc[:insert_index], new_row_df, df_add.iloc[insert_index:]]
+        ).reset_index(drop=True)
 
-        # تحديث الشيتات
-        sheets[sheet_name_add] = df_new.astype(object)
+        # تحديث الشيت في الذاكرة
+        sheets[sheet_name_add] = df_add.astype(object)
 
-        # حفظ ورفع واسترجاع
-        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new event under same range in {sheet_name_add}")
+        # الحفظ والرفع
+        new_sheets = save_local_excel_and_push(
+            sheets, commit_message=f"Add new row to {sheet_name_add}"
+        )
+
         if isinstance(new_sheets, dict):
             sheets = new_sheets
-            st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح (تحته مباشرة)!")
+            st.success(
+                f"✅ تم إضافة الصف الجديد بعد آخر صف في نفس الرينج ({start_val}–{end_val}) بنجاح!"
+            )
             st.dataframe(sheets[sheet_name_add])
 
 # -------------------------------
