@@ -241,3 +241,39 @@ with tab3:
                 st.dataframe(sheets[sheet_name_col])
         else:
             st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
+# -------------------------------
+# Tab 4: حذف صف من شيت
+# -------------------------------
+with st.tab("🗑 حذف صف"):
+    st.subheader("🗑 حذف صف من شيت محدد")
+    sheet_name_del = st.selectbox("اختر الشيت لحذف صف:", list(sheets.keys()), key="del_sheet")
+    df_del = sheets[sheet_name_del].astype(str).reset_index(drop=True)
+
+    st.dataframe(df_del)
+
+    # المستخدم يختار رقم الصف اللي عايز يحذفه
+    row_to_delete = st.number_input(
+        "📍 أدخل رقم الصف المطلوب حذفه (يبدأ من 0):",
+        min_value=0,
+        max_value=len(df_del) - 1 if len(df_del) > 0 else 0,
+        step=1
+    )
+
+    if st.button("🚨 حذف الصف المحدد", key=f"delete_row_{sheet_name_del}"):
+        if len(df_del) == 0:
+            st.warning("⚠ الشيت فارغ، لا يوجد صفوف للحذف.")
+        else:
+            # حذف الصف
+            df_new = df_del.drop(index=row_to_delete).reset_index(drop=True)
+            sheets[sheet_name_del] = df_new.astype(object)
+
+            # حفظ ورفع الملف بعد الحذف
+            new_sheets = save_local_excel_and_push(
+                sheets,
+                commit_message=f"Delete row {row_to_delete} from {sheet_name_del}"
+            )
+
+            if isinstance(new_sheets, dict):
+                sheets = new_sheets
+                st.success(f"✅ تم حذف الصف رقم {row_to_delete} بنجاح!")
+                st.dataframe(sheets[sheet_name_del])
