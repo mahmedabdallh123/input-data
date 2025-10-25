@@ -94,7 +94,6 @@ with tab1:
 
 # ===============================
 # Tab 2: إضافة صف جديد
-# ===============================
 with tab2:
     st.subheader("➕ إضافة صف جديد")
     sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
@@ -105,7 +104,10 @@ with tab2:
         new_data[col] = st.text_input(f"{col}", key=f"add_{col}")
 
     if st.button("💾 إضافة الصف الجديد"):
-        df_add = df_add.append(new_data, ignore_index=True)
+        # تحويل dict إلى DataFrame صغير
+        new_row_df = pd.DataFrame([new_data])
+        # دمجه مع df_add
+        df_add = pd.concat([df_add, new_row_df], ignore_index=True)
         sheets[sheet_name_add] = df_add
         with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
             for name, sh in sheets.items():
@@ -114,7 +116,6 @@ with tab2:
 
 # ===============================
 # Tab 3: إضافة عمود جديد
-# ===============================
 with tab3:
     st.subheader("🆕 إضافة عمود جديد")
     sheet_name_col = st.selectbox("اختر الشيت لإضافة عمود:", list(sheets.keys()), key="add_col_sheet")
@@ -125,11 +126,17 @@ with tab3:
 
     if st.button("💾 إضافة العمود الجديد"):
         if new_col_name:
+            # إضافة العمود للقيم الافتراضية لكل الصفوف
             df_col[new_col_name] = default_value
             sheets[sheet_name_col] = df_col
+
+            # حفظ الملف محليًا
             with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
                 for name, sh in sheets.items():
                     sh.to_excel(writer, sheet_name=name, index=False)
+
+            # رفع التعديلات إلى GitHub
             push_to_github(LOCAL_FILE, commit_message=f"Add new column '{new_col_name}' to {sheet_name_col}")
         else:
             st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
+
