@@ -102,6 +102,31 @@ with tab2:
     for col in df_add.columns:
         new_data[col] = st.text_input(f"{col}", key=f"add_{col}")
 
+    # Tab 1: تعديل البيانات
+with tab1:
+    st.subheader("✏️ تعديل البيانات")
+    sheet_name = st.selectbox("اختر الشيت:", list(sheets.keys()))
+    df = sheets[sheet_name].astype(str)  # تحويل كل الأعمدة لنوع object/text
+
+    edited_df = st.data_editor(df, num_rows="dynamic")
+    if st.button("💾 حفظ التعديلات", key="save_edit"):
+        # الاحتفاظ بالنوع العام كـ object
+        sheets[sheet_name] = edited_df.astype(str)
+        with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
+            for name, sh in sheets.items():
+                sh.to_excel(writer, sheet_name=name, index=False)
+        push_to_github(LOCAL_FILE, commit_message=f"Edit sheet {sheet_name}")
+
+# Tab 2: إضافة صف جديد
+with tab2:
+    st.subheader("➕ إضافة صف جديد")
+    sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
+    df_add = sheets[sheet_name_add].astype(str)  # تحويل كل الأعمدة لنصوص
+
+    new_data = {}
+    for col in df_add.columns:
+        new_data[col] = st.text_input(f"{col}", key=f"add_{col}")
+
     if st.button("💾 إضافة الصف الجديد"):
         new_row_df = pd.DataFrame([new_data]).astype(str)
         df_add = pd.concat([df_add, new_row_df], ignore_index=True)
