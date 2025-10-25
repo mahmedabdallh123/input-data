@@ -139,4 +139,3 @@ with tab3:
             push_to_github(LOCAL_FILE, commit_message=f"Add new column '{new_col_name}' to {sheet_name_col}")
         else:
             st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
-
