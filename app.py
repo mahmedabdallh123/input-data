@@ -2,18 +2,16 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
-import base64
+from io import BytesIO
+from github import Github
 
 # ===============================
-# 📂 إعدادات GitHub
+# 📂 إعدادات الملف
 # ===============================
-GITHUB_REPO = "mahmedabdallh123/input-data"
-GITHUB_BRANCH = "main"
-GITHUB_PATH = "Machine_Service_Lookup.xlsx"
-GITHUB_TOKEN = "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"
-
+REPO_NAME = "mahmedabdallh123/input-data"
+BRANCH = "main"
+FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
-GITHUB_RAW_URL = f"https://github.com/{GITHUB_REPO}/raw/{GITHUB_BRANCH}/{GITHUB_PATH}"
 
 # ===============================
 # تحميل Excel من GitHub
@@ -22,7 +20,8 @@ def fetch_excel():
     if not os.path.exists(LOCAL_FILE):
         st.info("📥 تحميل الملف من GitHub...")
         try:
-            r = requests.get(GITHUB_RAW_URL)
+            url = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
+            r = requests.get(url)
             r.raise_for_status()
             with open(LOCAL_FILE, "wb") as f:
                 f.write(r.content)
@@ -43,33 +42,32 @@ def load_sheets():
     return sheets
 
 # ===============================
-# رفع الملف على GitHub
+# رفع الملف إلى GitHub
 # ===============================
-def push_to_github(local_file, commit_msg):
+def push_to_github(local_file, commit_message="Update Excel via Streamlit"):
+    token = st.secrets["github"]["token"]
+    g = Github(token)
+    repo = g.get_repo(REPO_NAME)
+
     with open(local_file, "rb") as f:
         content = f.read()
-    content_b64 = base64.b64encode(content).decode()
 
-    # الحصول على SHA الحالي للملف
-    url_get = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}?ref={GITHUB_BRANCH}"
-    headers = {"Authorization": f"token {GITHUB_TOKEN}"}
-    r = requests.get(url_get, headers=headers)
-    sha = r.json()["sha"] if r.status_code == 200 else None
+    try:
+        # جلب الملف الحالي في الريبو
+        contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+        repo.update_file(
+            path=FILE_PATH,
+            message=commit_message,
+            content=content,
+            sha=contents.sha,
+            branch=BRANCH
+        )
+    except Exception as e:
+        st.error(f"⚠ فشل رفع الملف إلى GitHub: {e}")
+        return False
 
-    data = {
-        "message": commit_msg,
-        "content": content_b64,
-        "branch": GITHUB_BRANCH
-    }
-    if sha:
-        data["sha"] = sha
-
-    url_put = f"https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_PATH}"
-    r = requests.put(url_put, json=data, headers=headers)
-    if r.status_code in [200, 201]:
-        st.success(f"✅ تم رفع الملف على GitHub: {r.json()['commit']['html_url']}")
-    else:
-        st.error(f"⚠ فشل رفع الملف: {r.text}")
+    st.success("✅ تم رفع الملف إلى GitHub بنجاح!")
+    return True
 
 # ===============================
 # الواجهة
@@ -77,7 +75,8 @@ def push_to_github(local_file, commit_msg):
 st.title("🛠 CMMS - تعديل وإضافة بيانات (GitHub)")
 
 sheets = load_sheets()
-tab1, tab2 = st.tabs(["عرض وتعديل شيت", "إضافة صف/عمود جديد"])
+
+tab1, tab2 = st.tabs(["عرض وتعديل شيت", "إضافة صف جديد", "إضافة عمود جديد"])
 
 # ===============================
 # Tab 1: تعديل البيانات
@@ -88,45 +87,51 @@ with tab1:
     df = sheets[sheet_name]
 
     edited_df = st.data_editor(df, num_rows="dynamic")
-
     if st.button("💾 حفظ التعديلات", key="save_edit"):
         sheets[sheet_name] = edited_df
         with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
             for name, sh in sheets.items():
                 sh.to_excel(writer, sheet_name=name, index=False)
-        push_to_github(LOCAL_FILE, f"تعديل شيت {sheet_name}")
+        push_to_github(LOCAL_FILE, commit_message=f"Edit sheet {sheet_name}")
 
 # ===============================
-# Tab 2: إضافة صف أو عمود جديد
+# Tab 2: إضافة صف جديد
 # ===============================
 with tab2:
-    st.subheader("➕ إضافة صف أو عمود جديد")
-    sheet_name_add = st.selectbox("اختر الشيت:", list(sheets.keys()), key="add_sheet")
+    st.subheader("➕ إضافة صف جديد")
+    sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
     df_add = sheets[sheet_name_add]
 
-    st.markdown("#### إضافة صف")
-    new_row = {}
+    new_data = {}
     for col in df_add.columns:
-        new_row[col] = st.text_input(f"{col}", key=f"add_row_{col}")
+        new_data[col] = st.text_input(f"{col}", key=f"add_{col}")
+
     if st.button("💾 إضافة الصف الجديد"):
-        df_add = df_add.append(new_row, ignore_index=True)
+        df_add = df_add.append(new_data, ignore_index=True)
         sheets[sheet_name_add] = df_add
         with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
             for name, sh in sheets.items():
                 sh.to_excel(writer, sheet_name=name, index=False)
-        push_to_github(LOCAL_FILE, f"إضافة صف جديد في شيت {sheet_name_add}")
+        push_to_github(LOCAL_FILE, commit_message=f"Add new row to {sheet_name_add}")
 
-    st.markdown("---")
-    st.markdown("#### إضافة عمود جديد")
-    new_col_name = st.text_input("اسم العمود الجديد")
-    default_value = st.text_input("القيمة الافتراضية لكل الصفوف (اختياري)", "")
+# ===============================
+# Tab 3: إضافة عمود جديد
+# ===============================
+with tab2:
+    st.subheader("🆕 إضافة عمود جديد")
+    sheet_name_col = st.selectbox("اختر الشيت لإضافة عمود:", list(sheets.keys()), key="add_col_sheet")
+    df_col = sheets[sheet_name_col]
+
+    new_col_name = st.text_input("اسم العمود الجديد:")
+    default_value = st.text_input("القيمة الافتراضية لكل الصفوف (اختياري):", "")
+
     if st.button("💾 إضافة العمود الجديد"):
-        if new_col_name.strip() != "":
-            df_add[new_col_name] = default_value
-            sheets[sheet_name_add] = df_add
+        if new_col_name:
+            df_col[new_col_name] = default_value
+            sheets[sheet_name_col] = df_col
             with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
                 for name, sh in sheets.items():
                     sh.to_excel(writer, sheet_name=name, index=False)
-            push_to_github(LOCAL_FILE, f"إضافة عمود جديد '{new_col_name}' في شيت {sheet_name_add}")
+            push_to_github(LOCAL_FILE, commit_message=f"Add new column '{new_col_name}' to {sheet_name_col}")
         else:
-            st.warning("⚠ أدخل اسم العمود الجديد أولاً")
+            st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
