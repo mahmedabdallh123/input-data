@@ -160,10 +160,14 @@ else:
     else:
         logout_action()
 
-# ===============================
+# ✅ أضف هنا
+if st.session_state.get("logged_in"):
+    from edit_excel_module import *
+
+
 # ⚙ إعدادات GitHub
 # ===============================
-GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/NEW-CMMS/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/input-data/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
 
 # -------------------------------
