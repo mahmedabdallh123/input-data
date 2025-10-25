@@ -114,6 +114,9 @@ with tab1:
 # -------------------------------
 # Tab 2: إضافة صف جديد (أحداث متعددة بنفس الرينج)
 # -------------------------------
+# -------------------------------
+# Tab 2: إضافة صف جديد (أحداث متعددة بنفس الرينج)
+# -------------------------------
 with tab2:
     st.subheader("➕ إضافة صف جديد (سجل حدث جديد داخل نفس الرينج)")
     sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
@@ -125,25 +128,36 @@ with tab2:
         new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
-    # أنشئ DataFrame للصف الجديد وتأكد من تنسيقه
-    new_row_df = pd.DataFrame([new_data]).astype(str)
-    # دمج مع df الحالي (دون حذف القديم)
-    df_add = pd.concat([sheets[sheet_name_add].astype(str), new_row_df], ignore_index=True)
 
-    # ✅ الترتيب حسب card و Min_Tones و Max_Tones بعد الإضافة
-    sort_cols = [col for col in ["card", "Min_Tones", "Max_Tones"] if col in df_add.columns]
-    if sort_cols:
-        df_add = df_add.sort_values(by=sort_cols, ascending=True, na_position='last')
+        # تأكد من وجود عمود يحدد الرينج (مثلاً العمود الأول)
+        try:
+            range_value = str(new_data[list(df_add.columns)[0]]).strip()
+        except Exception:
+            st.error("⚠ لم يتم العثور على العمود الرئيسي لتحديد مكان الإدراج.")
+            st.stop()
 
-    # تحديث الشيت في الذاكرة
-    sheets[sheet_name_add] = df_add.astype(object)
+        # أنشئ صف جديد
+        new_row_df = pd.DataFrame([new_data]).astype(str)
 
-    # حفظ ورفع واسترجاع sheets المحدثة
-    new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row to {sheet_name_add}")
-    if isinstance(new_sheets, dict):
-        sheets = new_sheets
-        st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح وتم الترتيب حسب النطاق.")
-        st.dataframe(sheets[sheet_name_add])
+        # ابحث عن آخر صف بنفس قيمة الرينج وأدرج الصف بعده
+        same_range_idx = df_add.index[df_add.iloc[:, 0].astype(str).str.strip() == range_value]
+        if len(same_range_idx) > 0:
+            insert_pos = same_range_idx[-1] + 1
+            df_add_top = df_add.iloc[:insert_pos]
+            df_add_bottom = df_add.iloc[insert_pos:]
+            df_add = pd.concat([df_add_top, new_row_df, df_add_bottom], ignore_index=True)
+        else:
+            # لو الرينج مش موجود أضفه في النهاية
+            df_add = pd.concat([df_add, new_row_df], ignore_index=True)
+
+        # تحديث ورفع الملف
+        sheets[sheet_name_add] = df_add.astype(object)
+        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row in same range to {sheet_name_add}")
+        if isinstance(new_sheets, dict):
+            sheets = new_sheets
+            st.success("✅ تم إضافة الحدث الجديد في مكانه داخل نفس الرينج بنجاح!")
+            st.dataframe(sheets[sheet_name_add])
+
 # -------------------------------
 # Tab 3: إضافة عمود جديد
 # -------------------------------
