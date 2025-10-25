@@ -125,19 +125,25 @@ with tab2:
         new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
-        # أنشئ DataFrame للصف الجديد وتأكد من تنسيقه
-        new_row_df = pd.DataFrame([new_data]).astype(str)
-        # دمج مع df الحالي (دون حذف القديم)
-        df_add = pd.concat([sheets[sheet_name_add].astype(str), new_row_df], ignore_index=True)
-        sheets[sheet_name_add] = df_add.astype(object)
+    # أنشئ DataFrame للصف الجديد وتأكد من تنسيقه
+    new_row_df = pd.DataFrame([new_data]).astype(str)
+    # دمج مع df الحالي (دون حذف القديم)
+    df_add = pd.concat([sheets[sheet_name_add].astype(str), new_row_df], ignore_index=True)
 
-        # حفظ ورفع واسترجاع sheets المحدثة
-        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row to {sheet_name_add}")
-        if isinstance(new_sheets, dict):
-            sheets = new_sheets
-            st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح!")
-            st.dataframe(sheets[sheet_name_add])
+    # ✅ الترتيب حسب card و Min_Tones و Max_Tones بعد الإضافة
+    sort_cols = [col for col in ["card", "Min_Tones", "Max_Tones"] if col in df_add.columns]
+    if sort_cols:
+        df_add = df_add.sort_values(by=sort_cols, ascending=True, na_position='last')
 
+    # تحديث الشيت في الذاكرة
+    sheets[sheet_name_add] = df_add.astype(object)
+
+    # حفظ ورفع واسترجاع sheets المحدثة
+    new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row to {sheet_name_add}")
+    if isinstance(new_sheets, dict):
+        sheets = new_sheets
+        st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح وتم الترتيب حسب النطاق.")
+        st.dataframe(sheets[sheet_name_add])
 # -------------------------------
 # Tab 3: إضافة عمود جديد
 # -------------------------------
