@@ -112,8 +112,6 @@ with tab1:
             st.dataframe(sheets[sheet_name])  # عرض مباشر
 
 # -------------------------------
-# Tab 2: إضافة صف جديد (أحداث متعددة بنفس الرينج)
-# -------------------------------
 # -------------------------------
 # Tab 2: إضافة صف جديد (أحداث متعددة بنفس الرينج)
 # -------------------------------
@@ -129,33 +127,43 @@ with tab2:
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
 
-        # تأكد من وجود عمود يحدد الرينج (مثلاً العمود الأول)
-        try:
-            range_value = str(new_data[list(df_add.columns)[0]]).strip()
-        except Exception:
-            st.error("⚠ لم يتم العثور على العمود الرئيسي لتحديد مكان الإدراج.")
-            st.stop()
-
-        # أنشئ صف جديد
+        # إنشاء صف جديد
         new_row_df = pd.DataFrame([new_data]).astype(str)
 
-        # ابحث عن آخر صف بنفس قيمة الرينج وأدرج الصف بعده
-        same_range_idx = df_add.index[df_add.iloc[:, 0].astype(str).str.strip() == range_value]
-        if len(same_range_idx) > 0:
-            insert_pos = same_range_idx[-1] + 1
-            df_add_top = df_add.iloc[:insert_pos]
-            df_add_bottom = df_add.iloc[insert_pos:]
-            df_add = pd.concat([df_add_top, new_row_df, df_add_bottom], ignore_index=True)
-        else:
-            # لو الرينج مش موجود أضفه في النهاية
-            df_add = pd.concat([df_add, new_row_df], ignore_index=True)
+        # نحاول نحول Min_Tones و Max_Tones لأرقام (عشان المقارنة)
+        try:
+            new_min = float(str(new_data.get("Min_Tones", "")).strip() or 0)
+            new_max = float(str(new_data.get("Max_Tones", "")).strip() or 0)
+        except ValueError:
+            new_min, new_max = 0, 0
 
-        # تحديث ورفع الملف
-        sheets[sheet_name_add] = df_add.astype(object)
-        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row in same range to {sheet_name_add}")
+        # مكان الإدراج الافتراضي: آخر الجدول
+        insert_pos = len(df_add)
+
+        # نبحث عن أول صف مطابق للرنج الحالي
+        for i in range(len(df_add)):
+            try:
+                min_val = float(str(df_add.loc[i, "Min_Tones"]).strip() or 0)
+                max_val = float(str(df_add.loc[i, "Max_Tones"]).strip() or 0)
+                # لو الرينج الحالي هو نفس الرينج اللي المستخدم أدخله
+                if min_val == new_min and max_val == new_max:
+                    insert_pos = i + 1  # أضف الصف بعده مباشرة
+            except Exception:
+                continue
+
+        # تقسيم الجدول وإدراج الصف الجديد في مكانه الصحيح
+        df_top = df_add.iloc[:insert_pos]
+        df_bottom = df_add.iloc[insert_pos:]
+        df_new = pd.concat([df_top, new_row_df, df_bottom], ignore_index=True)
+
+        # تحديث الشيتات
+        sheets[sheet_name_add] = df_new.astype(object)
+
+        # حفظ ورفع واسترجاع
+        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new event under same range in {sheet_name_add}")
         if isinstance(new_sheets, dict):
             sheets = new_sheets
-            st.success("✅ تم إضافة الحدث الجديد في مكانه داخل نفس الرينج بنجاح!")
+            st.success("✅ تم إضافة الحدث الجديد داخل نفس الرينج بنجاح (تحته مباشرة)!")
             st.dataframe(sheets[sheet_name_add])
 
 # -------------------------------
