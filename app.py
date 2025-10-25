@@ -118,7 +118,7 @@ with tab1:
 with tab2:
     st.subheader("➕ إضافة صف جديد (سجل حدث جديد داخل نفس الرينج)")
     sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
-    df_add = sheets[sheet_name_add].astype(str)
+    df_add = sheets[sheet_name_add].astype(str).reset_index(drop=True)
 
     st.markdown("*أدخل بيانات الحدث (يمكنك إدخال أي نص/أرقام/تواريخ)*")
     new_data = {}
@@ -126,50 +126,97 @@ with tab2:
         new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
+        # تحويل الإدخال إلى DataFrame (كل شيء نص لتجنب مشاكل النوع)
         new_row_df = pd.DataFrame([new_data]).astype(str)
 
-        # محاولة إيجاد مكان الإدراج بناءً على الأعمدة "from" و "to"
-        try:
-            start_val = str(new_data.get("from", "")).strip()
-            end_val = str(new_data.get("to", "")).strip()
+        # تأكد أسماء الأعمدة المستخدمة للرينج و (اختياريًا) card
+        min_col = None
+        max_col = None
+        card_col = None
+        for c in df_add.columns:
+            c_low = c.strip().lower()
+            if c_low in ("min_tones", "min_tone", "min tones", "min"):
+                min_col = c
+            if c_low in ("max_tones", "max_tone", "max tones", "max"):
+                max_col = c
+            if c_low in ("card", "machine", "machine_no", "machine id"):
+                card_col = c
 
-            # البحث عن آخر صف له نفس الرينج بالضبط
-            mask = (
-                df_add["from"].astype(str).str.strip() == start_val
-            ) & (
-                df_add["to"].astype(str).str.strip() == end_val
-            )
+        # إذا الأعمدة مش موجودة، نرجع تحذير
+        if not min_col or not max_col:
+            st.error("⚠ لم يتم العثور على أعمدة Min_Tones و/أو Max_Tones في الشيت. تأكد من أسماء الأعمدة.")
+        else:
+            # قراءة القيم المدخلة (كنص ثم نحاول تحويل لأرقام)
+            new_min_raw = str(new_data.get(min_col, "")).strip()
+            new_max_raw = str(new_data.get(max_col, "")).strip()
+
+            # محاولة تحويل لرقم (إذا ممكن) لإجراء مقارنة عددية؛ لو فشل نستخدم النص للمطابقة
+            def to_num_or_none(x):
+                try:
+                    return float(x)
+                except:
+                    return None
+
+            new_min_num = to_num_or_none(new_min_raw)
+            new_max_num = to_num_or_none(new_max_raw)
+
+            # البحث عن آخر صف مطابق للرنج (ونراعي card لو موجود)
+            insert_pos = len(df_add)  # افتراضي: آخر الجدول
+            mask = pd.Series([False] * len(df_add))
+
+            if card_col:
+                # لو فيه عمود card نستخدمه للمطابقة أولاً (لو المستخدم أدخله)
+                new_card = str(new_data.get(card_col, "")).strip()
+                if new_card != "":
+                    # بناء قناع مطابق للرنج و card
+                    if new_min_num is not None and new_max_num is not None:
+                        mask = (df_add[card_col].astype(str).str.strip() == new_card) & \
+                               (pd.to_numeric(df_add[min_col], errors='coerce') == new_min_num) & \
+                               (pd.to_numeric(df_add[max_col], errors='coerce') == new_max_num)
+                    else:
+                        mask = (df_add[card_col].astype(str).str.strip() == new_card) & \
+                               (df_add[min_col].astype(str).str.strip() == new_min_raw) & \
+                               (df_add[max_col].astype(str).str.strip() == new_max_raw)
+            else:
+                # بدون card: نطابق على Min/Max فقط
+                if new_min_num is not None and new_max_num is not None:
+                    mask = (pd.to_numeric(df_add[min_col], errors='coerce') == new_min_num) & \
+                           (pd.to_numeric(df_add[max_col], errors='coerce') == new_max_num)
+                else:
+                    mask = (df_add[min_col].astype(str).str.strip() == new_min_raw) & \
+                           (df_add[max_col].astype(str).str.strip() == new_max_raw)
+
+            # Debug: اعرض القيم والقناع (يمكنك تعطيلها بعد ما تراجع)
+            st.write("DEBUG: new_min_raw, new_max_raw:", new_min_raw, new_max_raw)
+            st.write("DEBUG: Found match count:", mask.sum())
 
             if mask.any():
-                # بعد آخر صف بنفس الرينج
-                insert_index = mask[mask].index[-1] + 1
+                insert_pos = mask[mask].index[-1] + 1
             else:
-                # لو الرينج مش موجود، إدراجه في مكانه حسب الترتيب
-                df_add["from_num"] = pd.to_numeric(df_add["from"], errors="coerce")
-                insert_index = (df_add["from_num"] < float(start_val)).sum()
-                df_add = df_add.drop(columns=["from_num"])
-        except Exception as e:
-            insert_index = len(df_add)
+                # لو مفيش صف مطابق تمامًا للرنج، نحاول ندرجه حسب الترتيب الصاعد لـ Min_Tones
+                try:
+                    df_add["_min_num"] = pd.to_numeric(df_add[min_col], errors='coerce').fillna(-1)
+                    if new_min_num is not None:
+                        # الموضع هو عدد الصفوف اللي min أقل من new_min_num
+                        insert_pos = int((df_add["_min_num"] < new_min_num).sum())
+                    else:
+                        insert_pos = len(df_add)
+                    df_add = df_add.drop(columns=["_min_num"])
+                except Exception:
+                    insert_pos = len(df_add)
 
-        # إدراج الصف الجديد في المكان المحدد
-        df_add = pd.concat(
-            [df_add.iloc[:insert_index], new_row_df, df_add.iloc[insert_index:]]
-        ).reset_index(drop=True)
+            # الآن ندرج الصف الجديد في الموضع المحسوب
+            df_top = df_add.iloc[:insert_pos].reset_index(drop=True)
+            df_bottom = df_add.iloc[insert_pos:].reset_index(drop=True)
+            df_new = pd.concat([df_top, new_row_df.reset_index(drop=True), df_bottom], ignore_index=True)
 
-        # تحديث الشيت في الذاكرة
-        sheets[sheet_name_add] = df_add.astype(object)
-
-        # الحفظ والرفع
-        new_sheets = save_local_excel_and_push(
-            sheets, commit_message=f"Add new row to {sheet_name_add}"
-        )
-
-        if isinstance(new_sheets, dict):
-            sheets = new_sheets
-            st.success(
-                f"✅ تم إضافة الصف الجديد بعد آخر صف في نفس الرينج ({start_val}–{end_val}) بنجاح!"
-            )
-            st.dataframe(sheets[sheet_name_add])
+            # حفظ ورفع وتحديث الذاكرة
+            sheets[sheet_name_add] = df_new.astype(object)
+            new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row under range {new_min_raw}-{new_max_raw} in {sheet_name_add}")
+            if isinstance(new_sheets, dict):
+                sheets = new_sheets
+                st.success("✅ تم الإضافة — تم إدراج الصف في الموقع المناسب (تحته مباشرة إن وجد نفس الرنج).")
+                st.dataframe(sheets[sheet_name_add])
 
 # -------------------------------
 # Tab 3: إضافة عمود جديد
