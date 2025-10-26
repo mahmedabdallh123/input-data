@@ -163,7 +163,9 @@ else:
 # ✅ أضف هنا
 # ✅ تحميل وحدة التعديل فقط للمشرف (admin)
 if st.session_state.get("logged_in") and st.session_state.get("username") == "admin":
-    from edit_excel_module import *
+    from edit_excel_module import show_edit_page
+    show_edit_page()
+
     st.sidebar.info("🛠 وضع التعديل مفعل (Admin)")
 
 
