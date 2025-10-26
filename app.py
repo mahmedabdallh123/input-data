@@ -327,4 +327,4 @@ else:
         with col1:
             card_num = st.number_input("رقم الماكينة:", min_value=1, step=1)
         with col2:
-            current_tons = st.number_input("عدد الأطنان الحالية:",
+            current_tons = st.number_input("عدد الأطنان الحالية:",)
