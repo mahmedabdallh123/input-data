@@ -90,8 +90,20 @@ st.title("🛠 CMMS - تعديل وإضافة بيانات (GitHub)")
 # تأكد من وجود الملف المحلي
 fetch_excel_if_missing()
 
-# تحميل الشيتات
 sheets = load_sheets()
+
+# ← حط الكود الجديد هنا 👇
+if sheets:
+    st.sidebar.header("📂 قائمة الشيتات المتاحة")
+    all_sheet_names = list(sheets.keys())
+    selected_sheet = st.sidebar.selectbox("اختر الشيت المطلوب:", all_sheet_names)
+    st.success(f"✅ تم تحميل {len(all_sheet_names)} شيتات من الملف.")
+    st.write(f"*الشيت الحالي:* {selected_sheet}")
+    st.dataframe(sheets[selected_sheet])
+else:
+    st.error("⚠ لم يتم العثور على أي شيتات داخل الملف.")
+
+tab1, tab2, tab3 = st.tabs([...])
 
 tab1, tab2, tab3, tab4 = st.tabs([
     "عرض وتعديل شيت",
