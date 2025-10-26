@@ -161,8 +161,11 @@ else:
         logout_action()
 
 # ✅ أضف هنا
-if st.session_state.get("logged_in"):
+# ✅ تحميل وحدة التعديل فقط للمشرف (admin)
+if st.session_state.get("logged_in") and st.session_state.get("username") == "admin":
     from edit_excel_module import *
+    st.sidebar.info("🛠 وضع التعديل مفعل (Admin)")
+
 
 
 # ⚙ إعدادات GitHub
