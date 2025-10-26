@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # ===============================
 st.set_page_config(page_title="CMMS Service System", layout="wide")
 
-GITHUB_EXCEL_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/input-data/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
 GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxxx"  # ضع التوكن بتاعك هنا
 
 # ===============================
