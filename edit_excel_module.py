@@ -291,3 +291,5 @@ with tab4:
                         st.dataframe(sheets[sheet_name_del])
             except Exception as e:
                 st.error(f"حدث خطأ أثناء الحذف: {e}")
+if __name__ == "__main__" or "streamlit" in globals():
+    show_edit_page()  # ← اسم الدالة اللي بتعرض واجهة التعديل
