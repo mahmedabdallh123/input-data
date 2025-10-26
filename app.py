@@ -297,3 +297,8 @@ else:
     if st.session_state.get("username") == "admin":
         with selected_tab[1]:
             show_edit_page()
+# ===============================
+# 🚀 تشغيل التطبيق
+# ===============================
+if _name_ == "_main_":
+    main()
