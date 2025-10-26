@@ -1,330 +1,183 @@
 import streamlit as st
 import pandas as pd
-import requests
 import json
-import os
 import io
-import shutil
-import re
+import os
+import requests
 from datetime import datetime, timedelta
-from github import Github
 
 # ===============================
-# إعداد المستخدمين والجلسات
+# إعدادات التطبيق
 # ===============================
-USERS_FILE = "users.json"
-STATE_FILE = "state.json"
-SESSION_DURATION = timedelta(minutes=10)
-MAX_ACTIVE_USERS = 2
+st.set_page_config(page_title="CMMS Service System", layout="wide")
 
-def load_users():
-    try:
-        with open(USERS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        st.error("خطأ في ملف users.json")
-        st.stop()
+GITHUB_EXCEL_URL = "https://raw.githubusercontent.com/USERNAME/REPO/main/Machine_Service_Lookup.xlsx"
+GITHUB_TOKEN = "ghp_xxxxxxxxxxxxxxxxxxxxx"  # ضع التوكن بتاعك هنا
 
-def save_users(users):
-    with open(USERS_FILE, "w", encoding="utf-8") as f:
-        json.dump(users, f, indent=4, ensure_ascii=False)
+# ===============================
+# إدارة المستخدمين والجلسات
+# ===============================
+USERS = {
+    "admin": {"password": "1234", "role": "admin"},
+    "user1": {"password": "1111", "role": "user"},
+    "user2": {"password": "2222", "role": "user"}
+}
 
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump({}, f, indent=4, ensure_ascii=False)
-        return {}
-    try:
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {}
+SESSION_TIMEOUT = 60 * 30  # 30 دقيقة
 
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=4, ensure_ascii=False)
+def login():
+    st.sidebar.header("🔐 تسجيل الدخول")
+    username = st.sidebar.text_input("اسم المستخدم")
+    password = st.sidebar.text_input("كلمة المرور", type="password")
+    login_btn = st.sidebar.button("تسجيل الدخول")
 
-def cleanup_sessions(state):
-    now = datetime.now()
-    changed = False
-    for user, info in state.items():
-        if info.get("active") and "login_time" in info:
-            try:
-                login_time = datetime.fromisoformat(info["login_time"])
-                if now - login_time > SESSION_DURATION:
-                    info["active"] = False
-                    info.pop("login_time", None)
-                    changed = True
-            except:
-                info["active"] = False
-                changed = True
-    if changed:
-        save_state(state)
-    return state
-
-def remaining_time(state, username):
-    if not username or username not in state:
-        return None
-    info = state.get(username)
-    if not info or not info.get("active"):
-        return None
-    try:
-        lt = datetime.fromisoformat(info["login_time"])
-        remaining = SESSION_DURATION - (datetime.now() - lt)
-        if remaining.total_seconds() <= 0:
-            return None
-        return remaining
-    except:
-        return None
-
-def logout_action():
-    state = load_state()
-    username = st.session_state.get("username")
-    if username and username in state:
-        state[username]["active"] = False
-        state[username].pop("login_time", None)
-        save_state(state)
-    st.session_state.clear()
-    st.rerun()
-
-def login_ui():
-    users = load_users()
-    state = cleanup_sessions(load_state())
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-        st.session_state.username = None
-
-    st.title("تسجيل الدخول - Bail Yarn")
-    username_input = st.selectbox("اختر المستخدم", list(users.keys()))
-    password = st.text_input("كلمة المرور", type="password")
-
-    active_users = [u for u, v in state.items() if v.get("active")]
-    active_count = len(active_users)
-    st.caption(f"المستخدمون النشطون الآن: {active_count} / {MAX_ACTIVE_USERS}")
-
-    if not st.session_state.logged_in:
-        if st.button("تسجيل الدخول"):
-            if username_input in users and users[username_input]["password"] == password:
-                if username_input == "admin":
-                    pass
-                elif username_input in active_users:
-                    st.warning("هذا المستخدم مسجل دخول بالفعل.")
-                    return False
-                elif active_count >= MAX_ACTIVE_USERS:
-                    st.error("الحد الأقصى للمستخدمين المتصلين حالياً.")
-                    return False
-                state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
-                save_state(state)
-                st.session_state.logged_in = True
-                st.session_state.username = username_input
-                st.success(f"تم تسجيل الدخول: {username_input}")
-                st.rerun()
-            else:
-                st.error("كلمة المرور غير صحيحة.")
-        return False
-    else:
-        username = st.session_state.username
-        st.success(f"مسجل الدخول كـ: {username}")
-        rem = remaining_time(state, username)
-        if rem:
-            mins, secs = divmod(int(rem.total_seconds()), 60)
-            st.info(f"الوقت المتبقي: {mins:02d}:{secs:02d}")
+    if login_btn:
+        if username in USERS and USERS[username]["password"] == password:
+            st.session_state["logged_in"] = True
+            st.session_state["username"] = username
+            st.session_state["role"] = USERS[username]["role"]
+            st.session_state["login_time"] = datetime.now()
+            st.sidebar.success("✅ تم تسجيل الدخول بنجاح")
+            st.rerun()
         else:
-            st.warning("انتهت الجلسة، سيتم تسجيل الخروج.")
-            logout_action()
-        if st.button("تسجيل الخروج"):
-            logout_action()
-        return True
+            st.sidebar.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة")
+
+def check_session():
+    if "logged_in" not in st.session_state or not st.session_state["logged_in"]:
+        login()
+        st.stop()
+    else:
+        elapsed = (datetime.now() - st.session_state["login_time"]).total_seconds()
+        if elapsed > SESSION_TIMEOUT:
+            st.warning("⏳ انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى.")
+            for key in ["logged_in", "username", "role"]:
+                st.session_state.pop(key, None)
+            st.rerun()
+        st.sidebar.info(f"👋 {st.session_state['username']} ({st.session_state['role']})")
+
+        if st.sidebar.button("تسجيل الخروج"):
+            for key in ["logged_in", "username", "role"]:
+                st.session_state.pop(key, None)
+            st.rerun()
 
 # ===============================
-# إعداد GitHub و Excel
+# تحميل البيانات من GitHub
 # ===============================
-REPO_NAME = "mahmedabdallh123/input-data"
-BRANCH = "main"
-FILE_PATH = "Machine_Service_Lookup.xlsx"
-LOCAL_FILE = "Machine_Service_Lookup.xlsx"
-GITHUB_EXCEL_URL = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
-
+@st.cache_data
 def fetch_from_github():
     try:
-        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=10)
-        response.raise_for_status()
-        with open(LOCAL_FILE, "wb") as f:
-            shutil.copyfileobj(response.raw, f)
-        st.cache_data.clear()
-        st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success("تم تحديث البيانات من GitHub بنجاح وتم مسح الكاش.")
+        df = pd.read_excel(GITHUB_EXCEL_URL, sheet_name=None)
+        return df
     except Exception as e:
-        st.error(f"فشل التحديث من GitHub: {e}")
-
-@st.cache_data(show_spinner=False)
-def load_all_sheets():
-    if not os.path.exists(LOCAL_FILE):
-        st.error("الملف المحلي غير موجود. برجاء الضغط على زر التحديث أولًا.")
+        st.error(f"❌ فشل تحميل الملف من GitHub: {e}")
         return None
-    sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
-    for name, df in sheets.items():
-        df.columns = df.columns.str.strip()
-    return sheets
+
+def upload_to_github(df_dict):
+    try:
+        buffer = io.BytesIO()
+        with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+            for sheet, data in df_dict.items():
+                data.to_excel(writer, index=False, sheet_name=sheet)
+        content = buffer.getvalue()
+
+        repo = "USERNAME/REPO"  # ضع اسم الريبو هنا
+        path = "Machine_Service_Lookup.xlsx"
+        api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+        # الحصول على SHA
+        res = requests.get(api_url, headers={"Authorization": f"token {GITHUB_TOKEN}"})
+        sha = res.json().get("sha", "")
+
+        payload = {
+            "message": "تحديث البيانات من Streamlit",
+            "content": content.encode("base64"),
+            "sha": sha
+        }
+
+        res = requests.put(api_url, headers={
+            "Authorization": f"token {GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json"
+        }, data=json.dumps(payload))
+
+        if res.status_code in [200, 201]:
+            st.success("✅ تم رفع الملف بنجاح إلى GitHub.")
+        else:
+            st.error(f"فشل رفع الملف: {res.text}")
+    except Exception as e:
+        st.error(f"حدث خطأ أثناء رفع الملف: {e}")
 
 # ===============================
-# دوال الفحص وتلوين الأعمدة
+# عرض حالة الماكينة
 # ===============================
-def normalize_name(s):
-    if s is None: return ""
-    s = str(s).replace("\n", "+")
-    s = re.sub(r"[^0-9a-zA-Z\u0600-\u06FF\+\s_/.-]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip().lower()
-    return s
-
-def split_needed_services(needed_service_str):
-    if not isinstance(needed_service_str, str) or needed_service_str.strip() == "":
-        return []
-    parts = re.split(r"\+|,|\n|;", needed_service_str)
-    return [p.strip() for p in parts if p.strip() != ""]
-
-def highlight_cell(val, col_name):
-    color_map = {
-        "Service Needed": "background-color: #fff3cd; color:#856404; font-weight:bold;",
-        "Done Services": "background-color: #d4edda; color:#155724; font-weight:bold;",
-        "Not Done Services": "background-color: #f8d7da; color:#721c24; font-weight:bold;",
-        "Last Date": "background-color: #e7f1ff; color:#004085; font-weight:bold;",
-        "Last Tones": "background-color: #f0f0f0; color:#333; font-weight:bold;",
-        "Other": "background-color: #e2f0d9; color:#2e6f32; font-weight:bold;",
-        "Servised by": "background-color: #fdebd0; color:#7d6608; font-weight:bold;",
-        "Min_Tons": "background-color: #ebf5fb; color:#154360; font-weight:bold;",
-        "Max_Tons": "background-color: #f9ebea; color:#641e16; font-weight:bold;",
-    }
-    return color_map.get(col_name, "")
-
-def style_table(row):
-    return [highlight_cell(row[col], col) for col in row.index]
-
 def check_machine_status(card_num, current_tons, all_sheets):
-    if not all_sheets or "ServicePlan" not in all_sheets:
-        st.error("الملف لا يحتوي على شيت ServicePlan.")
+    sheet_name = list(all_sheets.keys())[0]
+    df = all_sheets[sheet_name]
+    if "Machine No" not in df.columns:
+        st.error("❌ لا يوجد عمود باسم 'Machine No' في الملف.")
         return
-    service_plan_df = all_sheets["ServicePlan"]
-    card_sheet_name = f"Card{card_num}"
-    if card_sheet_name not in all_sheets:
-        st.warning(f"لا يوجد شيت باسم {card_sheet_name}")
+
+    row = df[df["Machine No"] == card_num]
+    if row.empty:
+        st.warning("⚠ لم يتم العثور على الماكينة.")
         return
-    card_df = all_sheets[card_sheet_name]
-    # اختيار النطاق
-    view_option = st.radio(
-        "اختر نطاق العرض:",
-        ("الشريحة الحالية فقط", "كل الشرائح الأقل", "كل الشرائح الأعلى", "نطاق مخصص", "كل الشرائح"),
-        horizontal=True,
-        key="view_option"
-    )
-    min_range = st.session_state.get("min_range", max(0, current_tons - 500))
-    max_range = st.session_state.get("max_range", current_tons + 500)
-    if view_option == "نطاق مخصص":
-        col1, col2 = st.columns(2)
-        with col1:
-            min_range = st.number_input("من (طن):", min_value=0, step=100, value=min_range, key="min_range")
-        with col2:
-            max_range = st.number_input("إلى (طن):", min_value=min_range, step=100, value=max_range, key="max_range")
-    # اختيار الشرائح حسب النطاق
-    if view_option == "الشريحة الحالية فقط":
-        selected_slices = service_plan_df[(service_plan_df["Min_Tones"] <= current_tons) & (service_plan_df["Max_Tones"] >= current_tons)]
-    elif view_option == "كل الشرائح الأقل":
-        selected_slices = service_plan_df[service_plan_df["Max_Tones"] <= current_tons]
-    elif view_option == "كل الشرائح الأعلى":
-        selected_slices = service_plan_df[service_plan_df["Min_Tones"] >= current_tons]
-    elif view_option == "نطاق مخصص":
-        selected_slices = service_plan_df[(service_plan_df["Min_Tones"] >= min_range) & (service_plan_df["Max_Tones"] <= max_range)]
-    else:
-        selected_slices = service_plan_df.copy()
-    if selected_slices.empty:
-        st.warning("لا توجد شرائح مطابقة حسب النطاق المحدد.")
-        return
-    all_results = []
-    for _, current_slice in selected_slices.iterrows():
-        slice_min = current_slice["Min_Tones"]
-        slice_max = current_slice["Max_Tones"]
-        needed_service_raw = current_slice.get("Service", "")
-        needed_parts = split_needed_services(needed_service_raw)
-        needed_norm = [normalize_name(p) for p in needed_parts]
-        mask = (card_df.get("Min_Tones", 0).fillna(0) <= slice_max) & (card_df.get("Max_Tones", 0).fillna(0) >= slice_min)
-        matching_rows = card_df[mask]
-        done_services_set = set()
-        last_date = "-"
-        last_tons = "-"
-        last_other = "-"
-        last_servised_by = "-"
-        if not matching_rows.empty:
-            ignore_cols = {"card", "Tones", "Min_Tones", "Max_Tones", "Date", "Other", "Servised by"}
-            for _, r in matching_rows.iterrows():
-                for col in matching_rows.columns:
-                    if col not in ignore_cols:
-                        val = str(r.get(col, "")).strip()
-                        if val and val.lower() not in ["nan", "none", ""]:
-                            done_services_set.add(col)
-            if "Date" in matching_rows.columns:
-                try:
-                    cleaned_dates = matching_rows["Date"].astype(str).str.replace("\\", "/", regex=False)
-                    dates = pd.to_datetime(cleaned_dates, errors="coerce", dayfirst=True)
-                    if dates.notna().any():
-                        idx = dates.idxmax()
-                        last_date = dates.loc[idx].strftime("%d/%m/%Y")
-                except:
-                    last_date = "-"
-            if "Tones" in matching_rows.columns:
-                tons_vals = pd.to_numeric(matching_rows["Tones"], errors="coerce")
-                if tons_vals.notna().any():
-                    last_tons = int(tons_vals.max())
-            if "Other" in matching_rows.columns:
-                last_other = str(matching_rows["Other"].dropna().iloc[-1]) if matching_rows["Other"].notna().any() else "-"
-            if "Servised by" in matching_rows.columns:
-                last_servised_by = str(matching_rows["Servised by"].dropna().iloc[-1]) if matching_rows["Servised by"].notna().any() else "-"
-        done_services = sorted(list(done_services_set))
-        done_norm = [normalize_name(c) for c in done_services]
-        not_done = [orig for orig, n in zip(needed_parts, needed_norm) if n not in done_norm]
-        all_results.append({
-            "Min_Tons": slice_min,
-            "Max_Tons": slice_max,
-            "Service Needed": " + ".join(needed_parts) if needed_parts else "-",
-            "Done Services": ", ".join(done_services) if done_services else "-",
-            "Not Done Services": ", ".join(not_done) if not_done else "-",
-            "Last Date": last_date,
-            "Last Tones": last_tons,
-            "Other": last_other,
-            "Servised by": last_servised_by
-        })
-    result_df = pd.DataFrame(all_results).dropna(how="all").reset_index(drop=True)
-    st.markdown("### نتائج الفحص")
-    st.dataframe(result_df.style.apply(style_table, axis=1), use_container_width=True)
-    buffer = io.BytesIO()
-    result_df.to_excel(buffer, index=False, engine="openpyxl")
-    st.download_button(
-        label="حفظ النتائج كـ Excel",
-        data=buffer.getvalue(),
-        file_name=f"Service_Report_Card{card_num}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+
+    st.write("### 🧾 تفاصيل الماكينة:")
+    st.dataframe(row)
+
+    try:
+        last_tons = row.iloc[0]["Last Service Tons"]
+        interval = row.iloc[0]["Interval Tons"]
+        due = last_tons + interval
+
+        if current_tons >= due:
+            st.error("🔴 الخدمة مطلوبة الآن!")
+        elif current_tons >= due - interval * 0.2:
+            st.warning("🟡 اقترب موعد الخدمة.")
+        else:
+            st.success("🟢 الماكينة تعمل بشكل طبيعي.")
+    except Exception:
+        st.info("⚙ لم يتم العثور على بيانات كافية للحساب.")
 
 # ===============================
-# الواجهة الرئيسية
+# تعديل البيانات (للأدمن)
 # ===============================
-if not st.session_state.get("logged_in"):
-    if not login_ui():
-        st.stop()
-else:
-    username = st.session_state.username
-    tabs = ["📋 عرض الحالة"]
-    if username == "admin":
-        tabs.append("🛠 تعديل البيانات (Admin)")
-    selected_tab = st.tabs(tabs)
-    # تبويب عرض الحالة
-    with selected_tab[0]:
-        if st.button("🔄 تحديث البيانات من GitHub"):
-            fetch_from_github()
-        if "last_update" in st.session_state:
-            st.caption(f"آخر تحديث: {st.session_state['last_update']}")
-        all_sheets = load_all_sheets()
-        col1, col2 = st.columns(2)
-        with col1:
-            card_num = st.number_input("رقم الماكينة:", min_value=1, step=1)
-        with col2:
-            current_tons = st.number_input("عدد الأطنان الحالية:",)
+def show_edit_page(all_sheets):
+    st.subheader("🛠 تعديل بيانات الإكسيل")
+    sheet_name = st.selectbox("اختر الشيت:", list(all_sheets.keys()))
+    df = all_sheets[sheet_name]
+    st.dataframe(df, use_container_width=True)
+
+    st.write("### ✏ تعديل صف")
+    idx = st.number_input("رقم الصف:", min_value=0, max_value=len(df)-1, step=1)
+    col = st.selectbox("العمود:", df.columns)
+    new_val = st.text_input("القيمة الجديدة:")
+
+    if st.button("حفظ التعديل"):
+        df.at[idx, col] = new_val
+        all_sheets[sheet_name] = df
+        upload_to_github(all_sheets)
+
+# ===============================
+# تشغيل التطبيق
+# ===============================
+check_session()
+tabs = ["📋 عرض الحالة"]
+if st.session_state.get("role") == "admin":
+    tabs.append("🛠 تعديل البيانات")
+
+tab1, *rest = st.tabs(tabs)
+with tab1:
+    all_sheets = fetch_from_github()
+    if all_sheets:
+        card_num = st.number_input("رقم الماكينة:", min_value=1, step=1)
+        current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100)
+        if st.button("عرض الحالة"):
+            check_machine_status(card_num, current_tons, all_sheets)
+    else:
+        st.warning("⚠ الملف غير متاح حالياً.")
+
+if st.session_state.get("role") == "admin":
+    with rest[0]:
+        all_sheets = fetch_from_github()
+        if all_sheets:
+            show_edit_page(all_sheets)
