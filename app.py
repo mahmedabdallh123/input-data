@@ -228,12 +228,12 @@ def check_machine_status(card_num, current_tons, all_sheets):
         sheet_name = list(all_sheets.keys())[0]  # أول شيت
         df = all_sheets[sheet_name]
 
-        if "Machine No" not in df.columns:
-            st.error("❌ لا يوجد عمود باسم 'Machine No' في الملف.")
+        if "Card No" not in df.columns:
+            st.error("❌ لا يوجد عمود باسم 'Card No' في الملف.")
             return
 
         # البحث عن الماكينة
-        row = df[df["Machine No"].astype(str) == str(int(card_num))]
+        row = df[df["Card No"].astype(str) == str(int(card_num))]
         if row.empty:
             st.warning("⚠ لم يتم العثور على الماكينة بهذا الرقم.")
             return
