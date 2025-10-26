@@ -1,61 +1,238 @@
 import streamlit as st
 import pandas as pd
-import time
-import io
 import requests
-from datetime import datetime
+import json
+import os
+import io
+import shutil
+import re
+from datetime import datetime, timedelta
+from github import Github
 
 # ===============================
-# ⚙ إعداد الصفحة
+# 🔐 إعدادات المستخدمين والجلسات
 # ===============================
-st.set_page_config(page_title="CMMS Yarn Prep", layout="wide")
+USERS_FILE = "users.json"       # يحتوي على users {"admin":{"password":"123"}, "user1":{"password":"abc"}}
+STATE_FILE = "state.json"
+SESSION_DURATION = timedelta(minutes=10)
+MAX_ACTIVE_USERS = 2
 
 # ===============================
-# 🗝 بيانات الدخول
+# 📂 إعداد GitHub و Excel
 # ===============================
-USERS = {
-    "hall1": {"password": "123", "excel_url": "https://raw.githubusercontent.com/MedoTatch/cmms/main/hall1.xlsx"},
-    "hall2": {"password": "456", "excel_url": "https://raw.githubusercontent.com/MedoTatch/cmms/main/hall2.xlsx"},
-    "admin": {"password": "admin", "excel_url": "https://raw.githubusercontent.com/MedoTatch/cmms/main/hall1.xlsx"},
-}
+REPO_NAME = "mahmedabdallh123/input-data"
+BRANCH = "main"
+FILE_PATH = "Machine_Service_Lookup.xlsx"
+LOCAL_FILE = "Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_URL = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
 
 # ===============================
-# 🧠 دالة تحميل البيانات
+# 🧩 دوال مساعدة
 # ===============================
-@st.cache_data
-def load_excel_from_github(url):
+def load_users():
     try:
-        file_content = requests.get(url).content
-        df_dict = pd.read_excel(io.BytesIO(file_content), sheet_name=None)
-        return df_dict
-    except Exception as e:
-        st.error(f"حدث خطأ أثناء تحميل الملف: {e}")
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        st.error("❌ خطأ في ملف users.json")
+        st.stop()
+
+def save_users(users):
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, indent=4, ensure_ascii=False)
+
+def load_state():
+    if not os.path.exists(STATE_FILE):
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({}, f, indent=4, ensure_ascii=False)
+        return {}
+    try:
+        with open(STATE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_state(state):
+    with open(STATE_FILE, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=4, ensure_ascii=False)
+
+def cleanup_sessions(state):
+    now = datetime.now()
+    changed = False
+    for user, info in state.items():
+        if info.get("active") and "login_time" in info:
+            try:
+                login_time = datetime.fromisoformat(info["login_time"])
+                if now - login_time > SESSION_DURATION:
+                    info["active"] = False
+                    info.pop("login_time", None)
+                    changed = True
+            except:
+                info["active"] = False
+                changed = True
+    if changed:
+        save_state(state)
+    return state
+
+def remaining_time(state, username):
+    if not username or username not in state:
+        return None
+    info = state.get(username)
+    if not info or not info.get("active"):
+        return None
+    try:
+        lt = datetime.fromisoformat(info["login_time"])
+        remaining = SESSION_DURATION - (datetime.now() - lt)
+        if remaining.total_seconds() <= 0:
+            return None
+        return remaining
+    except:
         return None
 
-# ===============================
-# ⏳ دالة فحص الجلسة
-# ===============================
-def check_session():
-    if "login_time" in st.session_state:
-        elapsed = (datetime.now() - st.session_state["login_time"]).total_seconds()
-        if elapsed > 3600:  # ساعة واحدة
-            st.warning("⏰ انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى.")
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.stop()
+def logout_action():
+    state = load_state()
+    username = st.session_state.get("username")
+    if username and username in state:
+        state[username]["active"] = False
+        state[username].pop("login_time", None)
+        save_state(state)
+    st.session_state.clear()
+    st.rerun()
+
+def login_ui():
+    users = load_users()
+    state = cleanup_sessions(load_state())
+    if "logged_in" not in st.session_state:
+        st.session_state.logged_in = False
+        st.session_state.username = None
+
+    st.title("🔐 تسجيل الدخول - Bail Yarn")
+    username_input = st.selectbox("👤 اختر المستخدم", list(users.keys()))
+    password = st.text_input("🔑 كلمة المرور", type="password")
+
+    active_users = [u for u, v in state.items() if v.get("active")]
+    active_count = len(active_users)
+    st.caption(f"🔒 المستخدمون النشطون الآن: {active_count} / {MAX_ACTIVE_USERS}")
+
+    if not st.session_state.logged_in:
+        if st.button("تسجيل الدخول"):
+            if username_input in users and users[username_input]["password"] == password:
+                if username_input == "admin":
+                    pass
+                elif username_input in active_users:
+                    st.warning("⚠ هذا المستخدم مسجل دخول بالفعل.")
+                    return False
+                elif active_count >= MAX_ACTIVE_USERS:
+                    st.error("🚫 الحد الأقصى للمستخدمين المتصلين حالياً.")
+                    return False
+                state[username_input] = {"active": True, "login_time": datetime.now().isoformat()}
+                save_state(state)
+                st.session_state.logged_in = True
+                st.session_state.username = username_input
+                st.success(f"✅ تم تسجيل الدخول: {username_input}")
+                st.rerun()
+            else:
+                st.error("❌ كلمة المرور غير صحيحة.")
+        return False
+    else:
+        username = st.session_state.username
+        st.success(f"✅ مسجل الدخول كـ: {username}")
+        rem = remaining_time(state, username)
+        if rem:
+            mins, secs = divmod(int(rem.total_seconds()), 60)
+            st.info(f"⏳ الوقت المتبقي: {mins:02d}:{secs:02d}")
+        else:
+            st.warning("⏰ انتهت الجلسة، سيتم تسجيل الخروج.")
+            logout_action()
+        if st.button("🚪 تسجيل الخروج"):
+            logout_action()
+        return True
 
 # ===============================
-# 📊 دالة عرض حالة الماكينة
+# 🔄 GitHub & Excel Functions
+# ===============================
+def fetch_from_github():
+    try:
+        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=10)
+        response.raise_for_status()
+        with open(LOCAL_FILE, "wb") as f:
+            shutil.copyfileobj(response.raw, f)
+        st.cache_data.clear()
+        st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success("✅ تم تحديث البيانات من GitHub بنجاح وتم مسح الكاش.")
+    except Exception as e:
+        st.error(f"⚠ فشل التحديث من GitHub: {e}")
+
+@st.cache_data(show_spinner=False)
+def load_all_sheets():
+    if not os.path.exists(LOCAL_FILE):
+        st.error("❌ الملف المحلي غير موجود. برجاء الضغط على زر التحديث أولًا.")
+        return None
+    sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
+    for name, df in sheets.items():
+        df.columns = df.columns.str.strip()
+    return sheets
+
+# ===============================
+# 🛠 Excel Edit Module (Admin)
+# ===============================
+def show_edit_page():
+    st.title("🛠 CMMS - تعديل وإضافة بيانات (GitHub)")
+    sheets = load_all_sheets()
+    if not sheets:
+        return
+
+    sheet_name = st.selectbox("اختر الشيت:", list(sheets.keys()))
+    df = sheets[sheet_name].astype(str)
+    edited_df = st.data_editor(df, num_rows="dynamic")
+    if st.button("💾 حفظ التعديلات"):
+        sheets[sheet_name] = edited_df.astype(object)
+        save_local_excel_and_push(sheets)
+
+def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
+    import openpyxl
+    with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
+        for name, sh in sheets_dict.items():
+            try:
+                sh.to_excel(writer, sheet_name=name, index=False)
+            except Exception:
+                sh.astype(object).to_excel(writer, sheet_name=name, index=False)
+
+    try:
+        token = st.secrets["github"]["token"]
+    except:
+        st.error("🔒 GitHub token not found in Streamlit secrets.")
+        return False
+
+    g = Github(token)
+    repo = g.get_repo(REPO_NAME)
+
+    with open(LOCAL_FILE, "rb") as f:
+        content = f.read()
+
+    try:
+        contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+        repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
+    except Exception as e:
+        st.error(f"⚠ فشل رفع الملف إلى GitHub: {e}")
+        return False
+
+    st.cache_data.clear()
+    st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+    return True
+# ===============================
+# ⚙ دالة عرض حالة الماكينة
 # ===============================
 def check_machine_status(card_num, current_tons, all_sheets):
     try:
-        sheet_name = list(all_sheets.keys())[0]
+        sheet_name = list(all_sheets.keys())[0]  # أول شيت
         df = all_sheets[sheet_name]
 
         if "Machine No" not in df.columns:
             st.error("❌ لا يوجد عمود باسم 'Machine No' في الملف.")
             return
 
+        # البحث عن الماكينة
         row = df[df["Machine No"].astype(str) == str(int(card_num))]
         if row.empty:
             st.warning("⚠ لم يتم العثور على الماكينة بهذا الرقم.")
@@ -64,11 +241,13 @@ def check_machine_status(card_num, current_tons, all_sheets):
         st.subheader("🧾 تفاصيل الماكينة:")
         st.dataframe(row, use_container_width=True)
 
+        # التحقق من الأعمدة المطلوبة
         required_cols = ["Last Service Tons", "Interval Tons"]
         if not all(col in df.columns for col in required_cols):
             st.info("⚙ الملف لا يحتوي على الأعمدة المطلوبة للحساب.")
             return
 
+        # الحسابات
         last_tons = float(row.iloc[0]["Last Service Tons"])
         interval = float(row.iloc[0]["Interval Tons"])
         due = last_tons + interval
@@ -78,6 +257,7 @@ def check_machine_status(card_num, current_tons, all_sheets):
         st.write(f"🔹 الخدمة القادمة عند: {due}")
         st.write(f"🔹 الأطنان الحالية: {current_tons}")
 
+        # الحالة اللونية
         if current_tons >= due:
             st.error("🔴 الخدمة مطلوبة الآن!")
         elif current_tons >= due - (0.2 * interval):
@@ -87,97 +267,33 @@ def check_machine_status(card_num, current_tons, all_sheets):
 
     except Exception as e:
         st.error(f"حدث خطأ أثناء فحص الماكينة: {e}")
-
 # ===============================
-# 🧾 صفحة تعديل الإكسيل (للأدمن)
+# 🖥 Main
 # ===============================
-def show_edit_page(excel_url):
-    st.subheader("🛠 تعديل بيانات الإكسيل")
-
-    df_dict = load_excel_from_github(excel_url)
-    if not df_dict:
-        return
-
-    sheet_name = list(df_dict.keys())[0]
-    df = df_dict[sheet_name]
-
-    st.dataframe(df, use_container_width=True)
-
-    edited_df = st.data_editor(df, use_container_width=True)
-
-    if st.button("💾 حفظ التعديلات"):
-        try:
-            towrite = io.BytesIO()
-            with pd.ExcelWriter(towrite, engine="openpyxl") as writer:
-                edited_df.to_excel(writer, index=False, sheet_name=sheet_name)
-            towrite.seek(0)
-            st.download_button(
-                "⬇ تحميل الملف المعدل",
-                data=towrite,
-                file_name="updated_file.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
-            st.success("✅ تم حفظ الملف محليًا، يمكنك رفعه إلى GitHub يدويًا.")
-        except Exception as e:
-            st.error(f"حدث خطأ أثناء الحفظ: {e}")
-
-# ===============================
-# 🚪 صفحة الدخول
-# ===============================
-def login_page():
-    st.title("🔐 نظام متابعة الصيانة | CMMS Yarn Prep")
-
-    username = st.text_input("اسم المستخدم:")
-    password = st.text_input("كلمة المرور:", type="password")
-
-    if st.button("تسجيل الدخول"):
-        if username in USERS and USERS[username]["password"] == password:
-            st.session_state["username"] = username
-            st.session_state["login_time"] = datetime.now()
-            st.success("✅ تم تسجيل الدخول بنجاح.")
-            time.sleep(1)
-            st.rerun()
-        else:
-            st.error("❌ اسم المستخدم أو كلمة المرور غير صحيحة.")
-
-# ===============================
-# 🧩 التطبيق الرئيسي
-# ===============================
-def main():
-    check_session()
-
-    username = st.session_state.get("username", None)
-    if not username:
-        login_page()
+if not st.session_state.get("logged_in"):
+    if not login_ui():
         st.stop()
+else:
+    tabs = ["📋 عرض الحالة"]
+    if st.session_state.get("username") == "admin":
+        tabs.append("🛠 تعديل البيانات (Admin)")
 
-    st.sidebar.title(f"👋 أهلاً {username}")
-    excel_url = USERS[username]["excel_url"]
-    all_sheets = load_excel_from_github(excel_url)
-
-    tabs = ["📋 عرض الحالة", "⚙ تعديل البيانات"] if username == "admin" else ["📋 عرض الحالة"]
     selected_tab = st.tabs(tabs)
 
-    # تبويب عرض الحالة
+    # ---------- Tab 1: عرض الحالة ----------
     with selected_tab[0]:
-        st.subheader("📋 فحص حالة الماكينة")
+        if st.button("🔄 تحديث البيانات من GitHub"):
+            fetch_from_github()
 
-        card_num = st.text_input("رقم الماكينة:")
-        current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0.0)
+        all_sheets = load_all_sheets()
+        card_num = st.number_input("رقم الماكينة:", min_value=1, step=1)
+        current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100)
 
-        if st.button("✅ عرض الحالة"):
-            if all_sheets:
-                check_machine_status(card_num, current_tons, all_sheets)
-            else:
-                st.warning("⚠ لم يتم تحميل الملف بعد.")
+        if st.button("عرض الحالة") and all_sheets:
+            st.write(check_machine_status(card_num, current_tons, all_sheets)
+            # يمكن دمج دالة check_machine_status كما في كودك السابق
 
-    # تبويب التعديل للأدمن
-    if username == "admin":
+    # ---------- Tab 2: تعديل البيانات ----------
+    if st.session_state.get("username") == "admin":
         with selected_tab[1]:
-            show_edit_page(excel_url)
-
-# ===============================
-# 🚀 تشغيل التطبيق
-# ===============================
-if _name_ == "_main_":
-    main()
+            show_edit_page()
