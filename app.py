@@ -251,3 +251,52 @@ else:
     if st.session_state.get("username") == "admin":
         with selected_tab[1]:
             show_edit_page()
+# عرض حالة الماكينة
+# ===============================
+def check_machine_status(card_num, current_tons, all_sheets):
+    sheet_name = list(all_sheets.keys())[0]
+    df = all_sheets[sheet_name]
+    if "Machine No" not in df.columns:
+        st.error("❌ لا يوجد عمود باسم 'Machine No' في الملف.")
+        return
+
+    row = df[df["Machine No"] == card_num]
+    if row.empty:
+        st.warning("⚠ لم يتم العثور على الماكينة.")
+        return
+
+    st.write("### 🧾 تفاصيل الماكينة:")
+    st.dataframe(row)
+
+    try:
+        last_tons = row.iloc[0]["Last Service Tons"]
+        interval = row.iloc[0]["Interval Tons"]
+        due = last_tons + interval
+
+        if current_tons >= due:
+            st.error("🔴 الخدمة مطلوبة الآن!")
+        elif current_tons >= due - interval * 0.2:
+            st.warning("🟡 اقترب موعد الخدمة.")
+        else:
+            st.success("🟢 الماكينة تعمل بشكل طبيعي.")
+    except Exception:
+        st.info("⚙ لم يتم العثور على بيانات كافية للحساب.")
+
+# ===============================
+# تعديل البيانات (للأدمن)
+# ===============================
+def show_edit_page(all_sheets):
+    st.subheader("🛠 تعديل بيانات الإكسيل")
+    sheet_name = st.selectbox("اختر الشيت:", list(all_sheets.keys()))
+    df = all_sheets[sheet_name]
+    st.dataframe(df, use_container_width=True)
+
+    st.write("### ✏ تعديل صف")
+    idx = st.number_input("رقم الصف:", min_value=0, max_value=len(df)-1, step=1)
+    col = st.selectbox("العمود:", df.columns)
+    new_val = st.text_input("القيمة الجديدة:")
+
+    if st.button("حفظ التعديل"):
+        df.at[idx, col] = new_val
+        all_sheets[sheet_name] = df
+        upload_to_github(all_sheets)
