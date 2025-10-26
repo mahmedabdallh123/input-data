@@ -367,26 +367,45 @@ def check_machine_status(card_num, current_tons, all_sheets):
     )
 
 # ===============================
+# ===============================
 # 🖥 الواجهة الرئيسية
 # ===============================
 st.title("🏭 سيرفيس تحضيرات Bail Yarn")
 
-if st.button("🔄 تحديث البيانات من GitHub"):
-    fetch_from_github()
+# تبويبات التطبيق (للمستخدم العادي والأدمن)
+tabs = ["📋 عرض الحالة"]
+if st.session_state.get("username") == "admin":
+    tabs.append("🛠 تعديل البيانات (Admin)")
 
-if "last_update" in st.session_state:
-    st.caption(f"🕒 آخر تحديث: {st.session_state['last_update']}")
+selected_tab = st.tabs(tabs)
 
-all_sheets = load_all_sheets()
+# -------------------------------
+# تبويب عرض الحالة
+# -------------------------------
+with selected_tab[0]:
+    if st.button("🔄 تحديث البيانات من GitHub"):
+        fetch_from_github()
 
-col1, col2 = st.columns(2)
-with col1:
-    card_num = st.number_input("رقم الماكينة:", min_value=1, step=1, key="card_num")
-with col2:
-    current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100, key="current_tons")
+    if "last_update" in st.session_state:
+        st.caption(f"🕒 آخر تحديث: {st.session_state['last_update']}")
 
-if st.button("عرض الحالة"):
-    st.session_state["show_results"] = True
+    all_sheets = load_all_sheets()
 
-if st.session_state.get("show_results", False) and all_sheets:
-    check_machine_status(st.session_state.card_num, st.session_state.current_tons, all_sheets)
+    col1, col2 = st.columns(2)
+    with col1:
+        card_num = st.number_input("رقم الماكينة:", min_value=1, step=1, key="card_num")
+    with col2:
+        current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100, key="current_tons")
+
+    if st.button("عرض الحالة"):
+        st.session_state["show_results"] = True
+
+    if st.session_state.get("show_results", False) and all_sheets:
+        check_machine_status(st.session_state.card_num, st.session_state.current_tons, all_sheets)
+
+# -------------------------------
+# تبويب تعديل البيانات (Admin فقط)
+# -------------------------------
+if st.session_state.get("username") == "admin":
+    with selected_tab[1]:
+        from edit_excel_module import *
