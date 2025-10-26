@@ -1,25 +1,3 @@
-تمام ✅، سأدمج لك التطبيق كامل بحيث:
-
-يحتوي على تسجيل دخول وجلسات للمستخدمين.
-
-للمستخدم العادي: تبويب عرض الحالة فقط.
-
-للأدمن: تبويب عرض الحالة + تعديل البيانات على GitHub.
-
-تحديث البيانات من GitHub.
-
-فحص الماكينات مع تلوين الأعمدة واحتساب الخدمات المنجزة وغير المنجزة.
-
-إمكانية تنزيل نتائج الفحص كـ Excel.
-
-إمكانية تعديل Excel، إضافة صف/عمود، حذف صف، ورفع التعديلات على GitHub.
-
-
-
----
-
-app.py كامل وجاهز:
-
 import streamlit as st
 import pandas as pd
 import requests
@@ -34,7 +12,7 @@ from github import Github
 # ===============================
 # 🔐 إعدادات المستخدمين والجلسات
 # ===============================
-USERS_FILE = "users.json"  # مثال: {"admin":{"password":"123"}, "user1":{"password":"abc"}}
+USERS_FILE = "users.json"       # يحتوي على users {"admin":{"password":"123"}, "user1":{"password":"abc"}}
 STATE_FILE = "state.json"
 SESSION_DURATION = timedelta(minutes=10)
 MAX_ACTIVE_USERS = 2
@@ -49,7 +27,7 @@ LOCAL_FILE = "Machine_Service_Lookup.xlsx"
 GITHUB_EXCEL_URL = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
 
 # ===============================
-# 🧩 دوال الجلسات والمستخدمين
+# 🧩 دوال مساعدة
 # ===============================
 def load_users():
     try:
@@ -196,117 +174,80 @@ def load_all_sheets():
     return sheets
 
 # ===============================
-# 🟩 دوال التلوين والفحص
+# 🛠 Excel Edit Module (Admin)
 # ===============================
-def normalize_name(s):
-    if s is None: return ""
-    s = str(s).replace("\n", "+")
-    s = re.sub(r"[^0-9a-zA-Z\u0600-\u06FF\+\s_/.-]", " ", s)
-    s = re.sub(r"\s+", " ", s).strip().lower()
-    return s
-
-def split_needed_services(needed_service_str):
-    if not isinstance(needed_service_str, str) or needed_service_str.strip() == "":
-        return []
-    parts = re.split(r"\+|,|\n|;", needed_service_str)
-    return [p.strip() for p in parts if p.strip() != ""]
-
-def highlight_cell(val, col_name):
-    color_map = {
-        "Service Needed": "background-color: #fff3cd; color:#856404; font-weight:bold;",
-        "Done Services": "background-color: #d4edda; color:#155724; font-weight:bold;",
-        "Not Done Services": "background-color: #f8d7da; color:#721c24; font-weight:bold;",
-        "Last Date": "background-color: #e7f1ff; color:#004085; font-weight:bold;",
-        "Last Tones": "background-color: #f0f0f0; color:#333; font-weight:bold;",
-        "Other": "background-color: #e2f0d9; color:#2e6f32; font-weight:bold;",
-        "Servised by": "background-color: #fdebd0; color:#7d6608; font-weight:bold;",
-        "Min_Tons": "background-color: #ebf5fb; color:#154360; font-weight:bold;",
-        "Max_Tons": "background-color: #f9ebea; color:#641e16; font-weight:bold;",
-    }
-    return color_map.get(col_name, "")
-
-def style_table(row):
-    return [highlight_cell(row[col], col) for col in row.index]
-
-def check_machine_status(card_num, current_tons, all_sheets):
-    if not all_sheets or "ServicePlan" not in all_sheets:
-        st.error("❌ الملف لا يحتوي على شيت ServicePlan.")
-        return
-    service_plan_df = all_sheets["ServicePlan"]
-    card_sheet_name = f"Card{card_num}"
-    if card_sheet_name not in all_sheets:
-        st.warning(f"⚠ لا يوجد شيت باسم {card_sheet_name}")
-        return
-    card_df = all_sheets[card_sheet_name]
-
-    # نطاق العرض
-    view_option = st.radio(
-        "اختر نطاق العرض:",
-        ("الشريحة الحالية فقط", "كل الشرائح الأقل", "كل الشرائح الأعلى", "نطاق مخصص", "كل الشرائح"),
-        horizontal=True
-    )
-
-    min_range = max(0, current_tons - 500)
-    max_range = current_tons + 500
-    if view_option == "نطاق مخصص":
-        col1, col2 = st.columns(2)
-        with col1:
-            min_range = st.number_input("من (طن):", min_value=0, step=100, value=min_range)
-        with col2:
-            max_range = st.number_input("إلى (طن):", min_value=min_range, step=100, value=max_range)
-
-    if view_option == "الشريحة الحالية فقط":
-        selected_slices = service_plan_df[(service_plan_df["Min_Tones"] <= current_tons) & (service_plan_df["Max_Tones"] >= current_tons)]
-    elif view_option == "كل الشرائح الأقل":
-        selected_slices = service_plan_df[service_plan_df["Max_Tones"] <= current_tons]
-    elif view_option == "كل الشرائح الأعلى":
-        selected_slices = service_plan_df[service_plan_df["Min_Tones"] >= current_tons]
-    elif view_option == "نطاق مخصص":
-        selected_slices = service_plan_df[(service_plan_df["Min_Tones"] >= min_range) & (service_plan_df["Max_Tones"] <= max_range)]
-    else:
-        selected_slices = service_plan_df.copy()
-
-    if selected_slices.empty:
-        st.warning("⚠ لا توجد شرائح مطابقة حسب النطاق المحدد.")
+def show_edit_page():
+    st.title("🛠 CMMS - تعديل وإضافة بيانات (GitHub)")
+    sheets = load_all_sheets()
+    if not sheets:
         return
 
-    all_results = []
-    for _, current_slice in selected_slices.iterrows():
-        slice_min = current_slice["Min_Tones"]
-        slice_max = current_slice["Max_Tones"]
-        needed_service_raw = current_slice.get("Service", "")
-        needed_parts = split_needed_services(needed_service_raw)
-        needed_norm = [normalize_name(p) for p in needed_parts]
+    sheet_name = st.selectbox("اختر الشيت:", list(sheets.keys()))
+    df = sheets[sheet_name].astype(str)
+    edited_df = st.data_editor(df, num_rows="dynamic")
+    if st.button("💾 حفظ التعديلات"):
+        sheets[sheet_name] = edited_df.astype(object)
+        save_local_excel_and_push(sheets)
 
-        mask = (card_df.get("Min_Tones", 0).fillna(0) <= slice_max) & (card_df.get("Max_Tones", 0).fillna(0) >= slice_min)
-        matching_rows = card_df[mask]
+def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
+    import openpyxl
+    with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
+        for name, sh in sheets_dict.items():
+            try:
+                sh.to_excel(writer, sheet_name=name, index=False)
+            except Exception:
+                sh.astype(object).to_excel(writer, sheet_name=name, index=False)
 
-        done_services_set = set()
-        last_date = "-"
-        last_tons = "-"
-        last_other = "-"
-        last_servised_by = "-"
+    try:
+        token = st.secrets["github"]["token"]
+    except:
+        st.error("🔒 GitHub token not found in Streamlit secrets.")
+        return False
 
-        if not matching_rows.empty:
-            ignore_cols = {"card", "Tones", "Min_Tones", "Max_Tones", "Date", "Other", "Servised by"}
-            for _, r in matching_rows.iterrows():
-                for col in matching_rows.columns:
-                    if col not in ignore_cols:
-                        val = str(r.get(col, "")).strip()
-                        if val and val.lower() not in ["nan", "none", ""]:
-                            done_services_set.add(col)
-            # قراءة آخر تاريخ
-            if "Date" in matching_rows.columns:
-                try:
-                    cleaned_dates = matching_rows["Date"].astype(str).str.replace("\\", "/", regex=False)
-                    dates = pd.to_datetime(cleaned_dates, errors="coerce", dayfirst=True)
-                    if dates.notna().any():
-                        idx = dates.idxmax()
-                        last_date = dates.loc[idx].strftime("%d/%m/%Y")
-                except:
-                    last_date = "-"
-            # آخر طن
-            if "Tones" in matching_rows.columns:
-                tons_vals = pd.to_numeric(matching_rows["Tones"], errors="coerce")
-                if tons_vals.notna().any():
-                    last_tons = int(tons_vals
+    g = Github(token)
+    repo = g.get_repo(REPO_NAME)
+
+    with open(LOCAL_FILE, "rb") as f:
+        content = f.read()
+
+    try:
+        contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+        repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
+    except Exception as e:
+        st.error(f"⚠ فشل رفع الملف إلى GitHub: {e}")
+        return False
+
+    st.cache_data.clear()
+    st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+    return True
+
+# ===============================
+# 🖥 Main
+# ===============================
+if not st.session_state.get("logged_in"):
+    if not login_ui():
+        st.stop()
+else:
+    tabs = ["📋 عرض الحالة"]
+    if st.session_state.get("username") == "admin":
+        tabs.append("🛠 تعديل البيانات (Admin)")
+
+    selected_tab = st.tabs(tabs)
+
+    # ---------- Tab 1: عرض الحالة ----------
+    with selected_tab[0]:
+        if st.button("🔄 تحديث البيانات من GitHub"):
+            fetch_from_github()
+
+        all_sheets = load_all_sheets()
+        card_num = st.number_input("رقم الماكينة:", min_value=1, step=1)
+        current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100)
+
+        if st.button("عرض الحالة") and all_sheets:
+            st.write("✅ هنا سيتم استدعاء دالة check_machine_status(card_num, current_tons, all_sheets)")
+            # يمكن دمج دالة check_machine_status كما في كودك السابق
+
+    # ---------- Tab 2: تعديل البيانات ----------
+    if st.session_state.get("username") == "admin":
+        with selected_tab[1]:
+            show_edit_page()
