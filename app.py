@@ -146,7 +146,7 @@ def load_excel():
 # ===============================
 def check_machine_status(card_num, current_tons, df):
     try:
-        machine_row = df[df["Card No"] == int(card_num)]
+        machine_row = df[df["Card"] == int(card_num)]
         if machine_row.empty:
             st.warning("❌ رقم الماكينة غير موجود في الملف.")
             return
@@ -157,7 +157,7 @@ def check_machine_status(card_num, current_tons, df):
         status = "✅ Service Needed" if current_tons - done_tons >= required_tons else "🟢 Running Normally"
 
         st.subheader("🔍 حالة الماكينة")
-        st.write(f"*Card No:* {card_num}")
+        st.write(f"*Card:* {card_num}")
         st.write(f"*Tons Done:* {done_tons}")
         st.write(f"*Tons Required:* {required_tons}")
         st.write(f"*Current Tons:* {current_tons}")
