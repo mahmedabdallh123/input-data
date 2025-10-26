@@ -290,15 +290,11 @@ else:
         current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100)
 
         if st.button("عرض الحالة") and all_sheets:
-            st.write(check_machine_status(card_num, current_tons, all_sheets)
+            check_machine_status(card_num, current_tons, all_sheets)
             # يمكن دمج دالة check_machine_status كما في كودك السابق
 
     # ---------- Tab 2: تعديل البيانات ----------
     if st.session_state.get("username") == "admin":
         with selected_tab[1]:
             show_edit_page()
-# ===============================
-# 🚀 تشغيل التطبيق
-# ===============================
-if _name_ == "_main_":
-    main()
+
