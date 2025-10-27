@@ -115,7 +115,7 @@ def logout_action():
     keys = list(st.session_state.keys())
     for k in keys:
         st.session_state.pop(k, None)
-    st.experimental_rerun()
+    st.rerun()
 
 # -------------------------------
 # 🧠 واجهة تسجيل الدخول (مأخوذ وموسع)
