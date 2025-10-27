@@ -98,7 +98,13 @@ fetch_excel_if_missing()
 # نحمل الشيتات (مخبأة)
 sheets = load_sheets()
 
-tab1, tab2, tab3 = st.tabs(["عرض وتعديل شيت", "إضافة صف جديد (أحداث متتالية)", "إضافة عمود جديد"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "عرض وتعديل شيت",
+    "إضافة صف جديد (أحداث متتالية)",
+    "إضافة عمود جديد",
+    "🗑 حذف صف"
+])
+
 
 # -------------------------------
 # Tab 1: تعديل بيانات وعرض
@@ -268,3 +274,46 @@ with tab3:
             st.dataframe(sheets[sheet_name_col])
         else:
             st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
+# -------------------------------
+# Tab 4: حذف صف
+# -------------------------------
+with tab4:
+    st.subheader("🗑 حذف صف من الشيت")
+
+    sheet_name_del = st.selectbox("اختر الشيت:", list(sheets.keys()), key="delete_sheet")
+    df_del = sheets[sheet_name_del].astype(str).reset_index(drop=True)
+
+    st.markdown("### 📋 بيانات الشيت الحالية")
+    st.dataframe(df_del)
+
+    st.markdown("### ✏ اختر الصفوف التي تريد حذفها (برقم الصف):")
+    st.write("💡 ملاحظة: رقم الصف يبدأ من 0 (أول صف = 0)")
+
+    rows_to_delete = st.text_input("أدخل أرقام الصفوف مفصولة بفاصلة (مثلاً: 0,2,5):")
+
+    confirm_delete = st.checkbox("✅ أؤكد أني أريد حذف هذه الصفوف بشكل نهائي")
+
+    if st.button("🗑 تنفيذ الحذف", key=f"delete_rows_{sheet_name_del}"):
+        if rows_to_delete.strip() == "":
+            st.warning("⚠ الرجاء إدخال رقم الصف أو أكثر.")
+        elif not confirm_delete:
+            st.warning("⚠ برجاء تأكيد الحذف أولاً بوضع علامة ✅ قبل التنفيذ.")
+        else:
+            try:
+                # تحويل الإدخالات إلى أرقام صحيحة
+                rows_list = [int(x.strip()) for x in rows_to_delete.split(",") if x.strip().isdigit()]
+                rows_list = [r for r in rows_list if 0 <= r < len(df_del)]
+                
+                if not rows_list:
+                    st.warning("⚠ لم يتم العثور على صفوف صحيحة.")
+                else:
+                    df_new = df_del.drop(rows_list).reset_index(drop=True)
+                    sheets[sheet_name_del] = df_new.astype(object)
+
+                    new_sheets = save_local_excel_and_push(sheets, commit_message=f"Delete rows {rows_list} from {sheet_name_del}")
+                    if isinstance(new_sheets, dict):
+                        sheets = new_sheets
+                        st.success(f"✅ تم حذف الصفوف التالية بنجاح: {rows_list}")
+                        st.dataframe(sheets[sheet_name_del])
+            except Exception as e:
+                st.error(f"حدث خطأ أثناء الحذف: {e}")
