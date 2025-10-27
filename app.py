@@ -105,49 +105,152 @@ tab1, tab2, tab3 = st.tabs(["عرض وتعديل شيت", "إضافة صف جد�
 # -------------------------------
 with tab1:
     st.subheader("✏ تعديل البيانات")
+
     sheet_name = st.selectbox("اختر الشيت:", list(sheets.keys()), key="edit_sheet")
     df = sheets[sheet_name].astype(str)
 
     edited_df = st.data_editor(df, num_rows="dynamic")
+
     if st.button("💾 حفظ التعديلات", key=f"save_edit_{sheet_name}"):
         sheets[sheet_name] = edited_df.astype(object)
-        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Edit sheet {sheet_name}")
+        new_sheets = save_local_excel_and_push(
+            sheets,
+            commit_message=f"Edit sheet {sheet_name}"
+        )
         if isinstance(new_sheets, dict):
             sheets = new_sheets
-            st.dataframe(sheets[sheet_name])
+        st.dataframe(sheets[sheet_name])
+
 
 # -------------------------------
-# Tab 2: إضافة صف جديد
+# Tab 2: إضافة صف جديد (أحداث متعددة بنفس الرينج)
 # -------------------------------
 with tab2:
     st.subheader("➕ إضافة صف جديد (سجل حدث جديد داخل نفس الرينج)")
-    sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets.keys()), key="add_sheet")
-    df_add = sheets[sheet_name_add].astype(str)
 
-    st.markdown("*أدخل بيانات الحدث (يمكنك إدخال أي نص/أرقام/تواريخ)*")
+    sheet_name_add = st.selectbox(
+        "اختر الشيت لإضافة صف:",
+        list(sheets.keys()),
+        key="add_sheet"
+    )
+
+    df_add = sheets[sheet_name_add].astype(str).reset_index(drop=True)
+    st.markdown("أدخل بيانات الحدث (يمكنك إدخال أي نص/أرقام/تواريخ)")
+
     new_data = {}
     for col in df_add.columns:
         new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
 
     if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
-        new_row_df = pd.DataFrame([new_data]).astype(str)
-        df_add = pd.concat([sheets[sheet_name_add].astype(str), new_row_df], ignore_index=True)
-        sheets[sheet_name_add] = df_add.astype(object)
 
-        new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new row to {sheet_name_add}")
-        if isinstance(new_sheets, dict):
-            sheets = new_sheets
-            st.success("✅ تم إضافة الحدث الجديد بنجاح!")
+        # تحويل الإدخال إلى DataFrame
+        new_row_df = pd.DataFrame([new_data]).astype(str)
+
+        # البحث عن أعمدة الرينج
+        min_col, max_col, card_col = None, None, None
+        for c in df_add.columns:
+            c_low = c.strip().lower()
+            if c_low in ("min_tones", "min_tone", "min tones", "min"):
+                min_col = c
+            if c_low in ("max_tones", "max_tone", "max tones", "max"):
+                max_col = c
+            if c_low in ("card", "machine", "machine_no", "machine id"):
+                card_col = c
+
+        if not min_col or not max_col:
+            st.error("⚠ لم يتم العثور على أعمدة Min_Tones و/أو Max_Tones في الشيت.")
+        else:
+            def to_num_or_none(x):
+                try:
+                    return float(x)
+                except:
+                    return None
+
+            new_min_raw = str(new_data.get(min_col, "")).strip()
+            new_max_raw = str(new_data.get(max_col, "")).strip()
+            new_min_num = to_num_or_none(new_min_raw)
+            new_max_num = to_num_or_none(new_max_raw)
+
+            # البحث عن موضع الإدراج
+            insert_pos = len(df_add)
+            mask = pd.Series([False] * len(df_add))
+
+            if card_col:
+                new_card = str(new_data.get(card_col, "")).strip()
+                if new_card != "":
+                    if new_min_num is not None and new_max_num is not None:
+                        mask = (
+                            (df_add[card_col].astype(str).str.strip() == new_card) &
+                            (pd.to_numeric(df_add[min_col], errors='coerce') == new_min_num) &
+                            (pd.to_numeric(df_add[max_col], errors='coerce') == new_max_num)
+                        )
+                    else:
+                        mask = (
+                            (df_add[card_col].astype(str).str.strip() == new_card) &
+                            (df_add[min_col].astype(str).str.strip() == new_min_raw) &
+                            (df_add[max_col].astype(str).str.strip() == new_max_raw)
+                        )
+            else:
+                if new_min_num is not None and new_max_num is not None:
+                    mask = (
+                        (pd.to_numeric(df_add[min_col], errors='coerce') == new_min_num) &
+                        (pd.to_numeric(df_add[max_col], errors='coerce') == new_max_num)
+                    )
+                else:
+                    mask = (
+                        (df_add[min_col].astype(str).str.strip() == new_min_raw) &
+                        (df_add[max_col].astype(str).str.strip() == new_max_raw)
+                    )
+
+            st.write("DEBUG: new_min_raw, new_max_raw:", new_min_raw, new_max_raw)
+            st.write("DEBUG: Found match count:", mask.sum())
+
+            if mask.any():
+                insert_pos = mask[mask].index[-1] + 1
+            else:
+                try:
+                    df_add["_min_num"] = pd.to_numeric(df_add[min_col], errors='coerce').fillna(-1)
+                    if new_min_num is not None:
+                        insert_pos = int((df_add["_min_num"] < new_min_num).sum())
+                    else:
+                        insert_pos = len(df_add)
+                    df_add = df_add.drop(columns=["_min_num"])
+                except Exception:
+                    insert_pos = len(df_add)
+
+            df_top = df_add.iloc[:insert_pos].reset_index(drop=True)
+            df_bottom = df_add.iloc[insert_pos:].reset_index(drop=True)
+            df_new = pd.concat(
+                [df_top, new_row_df.reset_index(drop=True), df_bottom],
+                ignore_index=True
+            )
+
+            sheets[sheet_name_add] = df_new.astype(object)
+            new_sheets = save_local_excel_and_push(
+                sheets,
+                commit_message=f"Add new row under range {new_min_raw}-{new_max_raw} in {sheet_name_add}"
+            )
+
+            if isinstance(new_sheets, dict):
+                sheets = new_sheets
+
+            st.success("✅ تم الإضافة — تم إدراج الصف في الموقع المناسب.")
             st.dataframe(sheets[sheet_name_add])
+
 
 # -------------------------------
 # Tab 3: إضافة عمود جديد
 # -------------------------------
 with tab3:
     st.subheader("🆕 إضافة عمود جديد")
-    sheet_name_col = st.selectbox("اختر الشيت لإضافة عمود:", list(sheets.keys()), key="add_col_sheet")
-    df_col = sheets[sheet_name_col].astype(str)
 
+    sheet_name_col = st.selectbox(
+        "اختر الشيت لإضافة عمود:",
+        list(sheets.keys()),
+        key="add_col_sheet"
+    )
+
+    df_col = sheets[sheet_name_col].astype(str)
     new_col_name = st.text_input("اسم العمود الجديد:")
     default_value = st.text_input("القيمة الافتراضية لكل الصفوف (اختياري):", "")
 
@@ -155,11 +258,13 @@ with tab3:
         if new_col_name:
             df_col[new_col_name] = default_value
             sheets[sheet_name_col] = df_col.astype(object)
-
-            new_sheets = save_local_excel_and_push(sheets, commit_message=f"Add new column '{new_col_name}' to {sheet_name_col}")
+            new_sheets = save_local_excel_and_push(
+                sheets,
+                commit_message=f"Add new column '{new_col_name}' to {sheet_name_col}"
+            )
             if isinstance(new_sheets, dict):
                 sheets = new_sheets
-                st.success("✅ تم إضافة العمود الجديد بنجاح!")
-                st.dataframe(sheets[sheet_name_col])
+            st.success("✅ تم إضافة العمود الجديد بنجاح!")
+            st.dataframe(sheets[sheet_name_col])
         else:
             st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
