@@ -171,50 +171,60 @@ def login_ui():
         return True
 
 # -------------------------------
-# 🔄 طرق جلب الملف من GitHub
-# -------------------------------
-def fetch_from_github_requests():
-    """تحميل بإستخدام رابط RAW (requests)"""
+# ===============================
+# 🔄 تحديث وتحميل الملف من GitHub
+# ===============================
+def refresh_from_github():
+    """
+    تحميل أحدث نسخة من Excel من GitHub (سواء بتوكين أو بدون)
+    - يمسح الكاش
+    - يحدث البيانات
+    - يخزن الوقت الأخير للتحديث
+    """
     try:
-        response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=20)
-        response.raise_for_status()
-        with open(LOCAL_FILE, "wb") as f:
-            shutil.copyfileobj(response.raw, f)
+        st.info("⏳ جاري تحميل أحدث نسخة من البيانات من GitHub...")
+
+        # التحقق من وجود التوكين (لو متسجل في secrets)
+        token = None
         try:
-            st.cache_data.clear()
+            token = st.secrets.get("github", {}).get("token", None)
         except:
             pass
-        st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success("✅ تم تحديث البيانات من GitHub بنجاح وتم مسح الكاش.")
-    except Exception as e:
-        st.error(f"⚠ فشل التحديث من GitHub (requests): {e}")
 
-def fetch_from_github_api():
-    """تحميل عبر GitHub API (باستخدام PyGithub token في secrets)"""
-    if not GITHUB_AVAILABLE:
-        st.warning("PyGithub غير متوفر، سيتم المحاولة عبر رابط RAW.")
-        fetch_from_github_requests()
-        return
-    try:
-        token = st.secrets.get("github", {}).get("token", None)
-        if not token:
-            st.warning("توكين GitHub غير موجود في secrets، سيتم التحميل عبر رابط RAW.")
-            fetch_from_github_requests()
-            return
-        g = Github(token)
-        repo = g.get_repo(REPO_NAME)
-        file_content = repo.get_contents(FILE_PATH, ref=BRANCH)
-        content = b64decode(file_content.content)
+        if token:
+            # تحميل عبر GitHub API
+            g = Github(token)
+            repo = g.get_repo(REPO_NAME)
+            file_content = repo.get_contents(FILE_PATH, ref=BRANCH)
+            content = b64decode(file_content.content)
+            source = "GitHub API (token)"
+        else:
+            # تحميل عبر رابط RAW
+            response = requests.get(GITHUB_EXCEL_URL, timeout=15)
+            response.raise_for_status()
+            content = response.content
+            source = "GitHub RAW"
+
+        # حذف الملف القديم (لو موجود)
+        if os.path.exists(LOCAL_FILE):
+            os.remove(LOCAL_FILE)
+
+        # حفظ النسخة الجديدة
         with open(LOCAL_FILE, "wb") as f:
             f.write(content)
+
+        # مسح الكاش
         try:
             st.cache_data.clear()
         except:
             pass
+
+        # تحديث بيانات الجلسة
         st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success("✅ تم تحميل الملف من GitHub API بنجاح.")
+        st.success(f"✅ تم تحميل الملف بنجاح من {source} وتم مسح الكاش.")
+
     except Exception as e:
-        st.error(f"⚠ فشل تحميل الملف من GitHub API: {e}")
+        st.error(f"⚠ فشل تحميل الملف من GitHub: {e}")
 
 # -------------------------------
 # 📂 تحميل الشيتات (بدون كاش)
