@@ -187,8 +187,8 @@ def refresh_from_github():
         # التحقق من وجود التوكين (لو متسجل في secrets)
         token = None
         try:
-            token = st.secrets.get("github", {}).get("token", None)
-        except:
+            token = st.secrets["github"]["token"]
+        except Exception:
             pass
 
         if token:
@@ -200,7 +200,7 @@ def refresh_from_github():
             source = "GitHub API (token)"
         else:
             # تحميل عبر رابط RAW
-            response = requests.get(GITHUB_EXCEL_URL, timeout=15)
+            response = requests.get(GITHUB_EXCEL_URL, timeout=20)
             response.raise_for_status()
             content = response.content
             source = "GitHub RAW"
@@ -216,50 +216,60 @@ def refresh_from_github():
         # مسح الكاش
         try:
             st.cache_data.clear()
-        except:
+        except Exception:
             pass
 
         # تحديث بيانات الجلسة
         st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-        st.success(f"✅ تم تحميل الملف بنجاح من {source} وتم مسح الكاش.")
+        reload_sheets_into_session()
+        st.success(f"✅ تم تحميل الملف بنجاح من {source} وتم مسح الكاش وإعادة التحميل.")
+        st.rerun()
 
     except Exception as e:
         st.error(f"⚠ فشل تحميل الملف من GitHub: {e}")
+
 
 # -------------------------------
 # 📂 تحميل الشيتات (بدون كاش)
 # -------------------------------
 def load_all_sheets_uncached():
     if not os.path.exists(LOCAL_FILE):
-        return None
+        st.warning("⚠ ملف Excel غير موجود محليًا.")
+        return {}
     sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
     for name, df in sheets.items():
         df.columns = df.columns.str.strip()
     return sheets
 
+
 def load_sheets_for_edit_uncached():
     if not os.path.exists(LOCAL_FILE):
-        return None
+        st.warning("⚠ ملف Excel غير موجود محليًا.")
+        return {}
     sheets = pd.read_excel(LOCAL_FILE, sheet_name=None, dtype=object)
     for name, df in sheets.items():
         df.columns = df.columns.str.strip()
     return sheets
 
-# (لأغراض أخرى يمكنك الاحتفاظ بـ cached versions إن أردت)
+
+# -------------------------------
+# 🧠 تحميل مؤقت (Cache)
+# -------------------------------
 @st.cache_data(show_spinner=False)
 def load_all_sheets_cached():
     return load_all_sheets_uncached()
+
 
 @st.cache_data(show_spinner=False)
 def load_sheets_for_edit_cached():
     return load_sheets_for_edit_uncached()
 
+
 # -------------------------------
-# 🔁 حفظ محلي + رفع على GitHub + إعادة تحميل
+# 💾 حفظ محلي + رفع إلى GitHub
 # -------------------------------
 def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
-    """يحفظ الملف محليًا، يحاول رفعه إلى GitHub إذا التوكين متاح، ثم يعيد تحميل الشيتات (غير مخزنة)."""
-    # حفظ محليًا أولًا
+    """يحفظ الملف محليًا، يحاول رفعه إلى GitHub إذا التوكين متاح، ثم يعيد تحميل الشيتات."""
     try:
         with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
             for name, sh in sheets_dict.items():
@@ -271,23 +281,29 @@ def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit
         st.error(f"⚠ فشل في حفظ الملف محليًا: {e}")
         return load_sheets_for_edit_uncached()
 
-    # مسح الكاش المحلي
+    # مسح الكاش
     try:
         st.cache_data.clear()
-    except:
+    except Exception:
         pass
 
-    # جلب التوكين من secrets
-    token = st.secrets.get("github", {}).get("token", None)
+    # رفع على GitHub
+    token = None
+    try:
+        token = st.secrets["github"]["token"]
+    except Exception:
+        pass
+
     if not token:
-        st.warning("🔒 GitHub token not found in Streamlit secrets. التغييرات ستبقى محليًا فقط.")
+        st.warning("🔒 GitHub token غير موجود في Streamlit secrets. التغييرات ستبقى محليًا فقط.")
+        reload_sheets_into_session()
         return load_sheets_for_edit_uncached()
 
     if not GITHUB_AVAILABLE:
-        st.error("PyGithub غير مثبت على البيئة. التعديلات ستبقى محلياً.")
+        st.error("PyGithub غير مثبت على البيئة. التعديلات ستبقى محليًا.")
+        reload_sheets_into_session()
         return load_sheets_for_edit_uncached()
 
-    # محاولة الرفع عبر API
     try:
         g = Github(token)
         repo = g.get_repo(REPO_NAME)
@@ -304,23 +320,22 @@ def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit
                 branch=BRANCH
             )
         except Exception:
-            # لو الملف غير موجود حاول إنشاءه
-            try:
-                repo.create_file(
-                    path=FILE_PATH,
-                    message=commit_message,
-                    content=content,
-                    branch=BRANCH
-                )
-            except Exception as e_create:
-                st.error(f"⚠ فشل إنشاء الملف على GitHub: {e_create}")
-                return load_sheets_for_edit_uncached()
+            repo.create_file(
+                path=FILE_PATH,
+                message=commit_message,
+                content=content,
+                branch=BRANCH
+            )
 
         st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
-        return load_sheets_for_edit_uncached()
+        reload_sheets_into_session()
+        st.rerun()
+
     except Exception as e:
         st.error(f"⚠ فشل الاتصال بـ GitHub: {e}")
+        reload_sheets_into_session()
         return load_sheets_for_edit_uncached()
+
 
 # -------------------------------
 # 🔁 دالة لإعادة تحميل الشيتات داخل الجلسة فورًا
@@ -329,12 +344,11 @@ def reload_sheets_into_session():
     """يمسح الكاش ويعيد تحميل الشيتات من الملف المحلي إلى session_state."""
     try:
         st.cache_data.clear()
-    except:
+    except Exception:
         pass
     st.session_state["all_sheets"] = load_all_sheets_uncached()
     st.session_state["sheets_edit"] = load_sheets_for_edit_uncached()
     st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
-
 # -------------------------------
 # 🧰 دوال مساعدة للمعالجة والنصوص
 # -------------------------------
