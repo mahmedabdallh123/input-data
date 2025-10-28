@@ -514,11 +514,11 @@ with st.sidebar:
         fetch_from_github_requests()
         # بعد التحميل اعادة تحميل الجلسة فورًا
         reload_sheets_into_session()
-        st.experimental_rerun()
+        st.rerun()
     if st.button("🔄 تحديث الملف من GitHub (API)"):
         fetch_from_github_api()
         reload_sheets_into_session()
-        st.experimental_rerun()
+        st.rerun()
     st.markdown("ملحوظة: تحميل الـ RAW يعمل بدون توكين، لكن الرفع يحتاج توكين في secrets.")
     st.markdown("---")
     if st.button("🚪 تسجيل الخروج"):
@@ -601,7 +601,7 @@ with tabs[1]:
                 # إعادة تحميل الجلسة وعرض التغيرات
                 reload_sheets_into_session()
                 st.success("✅ تم حفظ التعديلات. جاري تحديث العرض...")
-                st.experimental_rerun()
+                st.rerun()
 
         # Tab2 - إضافة صف
         with tab2:
@@ -708,7 +708,7 @@ with tabs[1]:
                         # reload & rerun
                         reload_sheets_into_session()
                         st.success("✅ تم إدراج الصف محليًا (لم يتم رفعه إلى GitHub).")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         _ = save_local_excel_and_push(
                             sheets_edit,
@@ -716,7 +716,7 @@ with tabs[1]:
                         )
                         reload_sheets_into_session()
                         st.success("✅ تم الإضافة — تم إدراج الصف في الموقع المناسب.")
-                        st.experimental_rerun()
+                        st.rerun()
 
         # Tab3 - إضافة عمود
         with tab3:
@@ -739,7 +739,7 @@ with tabs[1]:
                                     sh.astype(object).to_excel(writer, sheet_name=name, index=False)
                         reload_sheets_into_session()
                         st.success("✅ تم إضافة العمود محليًا (لم يتم رفعه إلى GitHub).")
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         _ = save_local_excel_and_push(
                             sheets_edit,
@@ -747,7 +747,7 @@ with tabs[1]:
                         )
                         reload_sheets_into_session()
                         st.success("✅ تم إضافة العمود الجديد بنجاح!")
-                        st.experimental_rerun()
+                        st.rerun()
                 else:
                     st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
 
@@ -791,12 +791,12 @@ with tabs[1]:
                                             sh.astype(object).to_excel(writer, sheet_name=name, index=False)
                                 reload_sheets_into_session()
                                 st.success(f"✅ تم حذف الصفوف التالية محليًا: {rows_list}")
-                                st.experimental_rerun()
+                                st.rerun()
                             else:
                                 _ = save_local_excel_and_push(sheets_edit, commit_message=f"Delete rows {rows_list} from {sheet_name_del} by {st.session_state.get('username')}")
                                 reload_sheets_into_session()
                                 st.success(f"✅ تم حذف الصفوف التالية بنجاح: {rows_list}")
-                                st.experimental_rerun()
+                                st.rerun()
                     except Exception as e:
                         st.error(f"حدث خطأ أثناء الحذف: {e}")
 
@@ -828,7 +828,7 @@ with tabs[2]:
                     users[new_user] = {"password": new_pass}
                     save_users(users)
                     st.success("✅ تم إضافة المستخدم.")
-                    st.experimental_rerun()
+                    st.rerun()
 
         st.markdown("### 🗑 حذف مستخدم")
         del_user = st.selectbox("اختر مستخدم للحذف:", [u for u in users.keys() if u != "admin"])
@@ -837,4 +837,4 @@ with tabs[2]:
                 users.pop(del_user, None)
                 save_users(users)
                 st.success("✅ تم الحذف.")
-                st.experimental_rerun()
+                st.rerun()
