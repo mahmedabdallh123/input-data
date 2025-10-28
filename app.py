@@ -231,27 +231,60 @@ def load_sheets_for_edit_uncached():
 # 🔁 حفظ محلي + رفع على GitHub + إعادة تحميل
 # -------------------------------
 def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
+    # حفظ محلياً
     with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
         for name, sh in sheets_dict.items():
             try:
                 sh.to_excel(writer, sheet_name=name, index=False)
             except:
                 sh.astype(object).to_excel(writer, sheet_name=name, index=False)
-    try: st.cache_data.clear()
-    except: pass
 
+    # مسح الكاش
+    try:
+        st.cache_data.clear()
+    except:
+        pass
+
+    # محاولة رفع الملف عبر GitHub
     token = st.secrets.get("github", {}).get("token", None)
     if not token:
         st.warning("🔒 GitHub token not found. التغييرات ستبقى محلياً.")
         return load_sheets_for_edit_uncached()
+
     if not GITHUB_AVAILABLE:
         st.error("PyGithub غير مثبت. لن يتم الرفع.")
         return load_sheets_for_edit_uncached()
+
     try:
         g = Github(token)
         repo = g.get_repo(REPO_NAME)
-        with open(LOCAL_FILE, "rb") as f: content = f.read()
-        try
+        with open(LOCAL_FILE, "rb") as f:
+            content = f.read()
+
+        try:
+            contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+            repo.update_file(
+                path=FILE_PATH,
+                message=commit_message,
+                content=content,
+                sha=contents.sha,
+                branch=BRANCH
+            )
+        except Exception:
+            # إذا الملف مش موجود، إنشاء جديد
+            repo.create_file(
+                path=FILE_PATH,
+                message=commit_message,
+                content=content,
+                branch=BRANCH
+            )
+
+        st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+        return load_sheets_for_edit_uncached()
+
+    except Exception as e:
+        st.error(f"⚠ فشل الاتصال بـ GitHub: {e}")
+        return load_sheets_for_edit_uncached()
 
 # -------------------------------
 # 🧰 دوال مساعدة للمعالجة والنصوص (مأخوذة كاملة)
