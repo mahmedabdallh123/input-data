@@ -30,7 +30,7 @@ REPO_NAME = "mahmedabdallh123/input-data"  # عدل إذا لزم
 BRANCH = "main"
 FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
-GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/NEW-CMMS/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/input-data/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
 
 # -------------------------------
 # 🧩 دوال مساعدة للملفات والحالة
