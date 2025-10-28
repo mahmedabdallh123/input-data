@@ -26,11 +26,14 @@ SESSION_DURATION = timedelta(minutes=10)  # مدة الجلسة 10 دقائق
 MAX_ACTIVE_USERS = 2  # أقصى عدد مستخدمين مسموح
 
 # إعدادات GitHub (مسارات الملف والريبو)
-REPO_NAME = "mahmedabdallh123/input-data"  # عدل إذا لزم
+# ================================
+REPO_NAME = "mahmedabdallh123/input-data"
 BRANCH = "main"
 FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
-GITHUB_EXCEL_URL = "https://github.com/mahmedabdallh123/input-data/raw/refs/heads/main/Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_URL = f"https://github.com/{REPO_NAME}/raw/refs/heads/{BRANCH}/{FILE_PATH}"
+
+#
 
 # -------------------------------
 # 🧩 دوال مساعدة للملفات والحالة
@@ -171,28 +174,25 @@ def login_ui():
             logout_action()
         return True
 
-# -------------------------------
-# 🔄 طرق جلب الملف من GitHub
-# -------------------------------
+# ================================
+# 🔄 تحميل الملف من GitHub
+# ================================
 def fetch_from_github_requests():
-    """تحميل بإستخدام رابط RAW (requests)"""
+    """تحميل الملف باستخدام رابط RAW"""
     try:
         response = requests.get(GITHUB_EXCEL_URL, stream=True, timeout=15)
         response.raise_for_status()
         with open(LOCAL_FILE, "wb") as f:
             shutil.copyfileobj(response.raw, f)
-        # امسح الكاش
-        try:
-            st.cache_data.clear()
-        except:
-            pass
+        # امسح الكاش فورًا
+        st.cache_data.clear()
         st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         st.success("✅ تم تحديث البيانات من GitHub بنجاح وتم مسح الكاش.")
     except Exception as e:
         st.error(f"⚠ فشل التحديث من GitHub (requests): {e}")
 
 def fetch_from_github_api():
-    """تحميل عبر GitHub API (باستخدام PyGithub token في secrets)"""
+    """تحميل الملف باستخدام GitHub API و token من secrets"""
     if not GITHUB_AVAILABLE:
         st.warning("PyGithub غير متوفر، سيتم المحاولة عبر رابط RAW.")
         fetch_from_github_requests()
@@ -209,20 +209,17 @@ def fetch_from_github_api():
         content = b64decode(file_content.content)
         with open(LOCAL_FILE, "wb") as f:
             f.write(content)
-        try:
-            st.cache_data.clear()
-        except:
-            pass
+        st.cache_data.clear()
         st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
         st.success("✅ تم تحميل الملف من GitHub API بنجاح.")
     except Exception as e:
         st.error(f"⚠ فشل تحميل الملف من GitHub API: {e}")
 
-# -------------------------------
-# 📂 تحميل الشيتات (مخبأ)
-# -------------------------------
-@st.cache_data(show_spinner=False)
-def load_all_sheets():
+# ================================
+# 📂 تحميل الشيتات بدون cache
+# ================================
+def load_all_sheets_uncached():
+    """تحميل كل الشيتات بدون cache (للعرض بعد تعديل أو رفع)"""
     if not os.path.exists(LOCAL_FILE):
         return None
     sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
@@ -230,9 +227,8 @@ def load_all_sheets():
         df.columns = df.columns.str.strip()
     return sheets
 
-# نسخة مع dtype=object لواجهة التحرير
-@st.cache_data(show_spinner=False)
-def load_sheets_for_edit():
+def load_sheets_for_edit_uncached():
+    """تحميل الشيتات للتحرير بدون cache"""
     if not os.path.exists(LOCAL_FILE):
         return None
     sheets = pd.read_excel(LOCAL_FILE, sheet_name=None, dtype=object)
@@ -240,9 +236,9 @@ def load_sheets_for_edit():
         df.columns = df.columns.str.strip()
     return sheets
 
-# -------------------------------
-# 🔁 حفظ محلي + رفع على GitHub + مسح الكاش + إعادة تحميل
-# -------------------------------
+# ================================
+# 🔁 حفظ محلي + رفع على GitHub + مسح الكاش
+# ================================
 def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
     # احفظ محلياً
     with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
@@ -252,21 +248,18 @@ def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit
             except Exception:
                 sh.astype(object).to_excel(writer, sheet_name=name, index=False)
 
-    # امسح الكاش
-    try:
-        st.cache_data.clear()
-    except:
-        pass
+    # امسح الكاش فورًا
+    st.cache_data.clear()
 
-    # حاول الرفع عبر PyGithub token في secrets
+    # تحقق من وجود token و PyGithub
     token = st.secrets.get("github", {}).get("token", None)
     if not token:
-        st.warning("🔒 GitHub token not found in Streamlit secrets. لن يتم الرفع إلى الريبو.")
-        return load_sheets_for_edit()
+        st.warning("🔒 GitHub token غير موجود. التعديلات ستبقى محليًا فقط.")
+        return load_sheets_for_edit_uncached()
 
     if not GITHUB_AVAILABLE:
-        st.error("PyGithub غير مثبت على بيئتك. تثبيته مطلوب للرفع التلقائي.")
-        return load_sheets_for_edit()
+        st.error("PyGithub غير مثبت. التعديلات ستبقى محليًا فقط.")
+        return load_sheets_for_edit_uncached()
 
     try:
         g = Github(token)
@@ -275,21 +268,29 @@ def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit
             content = f.read()
 
         try:
+            # محاولة التحديث
             contents = repo.get_contents(FILE_PATH, ref=BRANCH)
-            repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
-        except Exception as e:
-            # حاول رفع كملف جديد أو إنشاء
-            try:
-                repo.create_file(path=FILE_PATH, message=commit_message, content=content, branch=BRANCH)
-            except Exception as e2:
-                st.error(f"⚠ فشل رفع الملف إلى GitHub: {e2}")
-                return load_sheets_for_edit()
+            repo.update_file(
+                path=FILE_PATH,
+                message=commit_message,
+                content=content,
+                sha=contents.sha,
+                branch=BRANCH
+            )
+        except Exception:
+            # محاولة إنشاء الملف إذا لم يكن موجودًا
+            repo.create_file(
+                path=FILE_PATH,
+                message=commit_message,
+                content=content,
+                branch=BRANCH
+            )
 
         st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
-        return load_sheets_for_edit()
+        return load_sheets_for_edit_uncached()
     except Exception as e:
         st.error(f"⚠ فشل الاتصال بـ GitHub: {e}")
-        return load_sheets_for_edit()
+        return load_sheets_for_edit_uncached()
 
 # -------------------------------
 # 🧰 دوال مساعدة للمعالجة والنصوص (مأخوذة كاملة)
