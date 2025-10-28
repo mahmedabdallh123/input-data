@@ -483,10 +483,10 @@ with st.sidebar:
         logout_action()
 
 # تحميل الشيتات (عرض وتحليل)
-all_sheets = load_all_sheets()
+all_sheets = load_all_sheets_uncached()
 
 # تحميل الشيتات للتحرير (dtype=object)
-sheets_edit = load_sheets_for_edit()
+sheets_edit = load_sheets_for_edit_uncached()
 
 # واجهة التبويبات الرئيسية
 st.title("🏭 CMMS - Bail Yarn")
