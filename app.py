@@ -213,17 +213,14 @@ def refresh_from_github():
         with open(LOCAL_FILE, "wb") as f:
             f.write(content)
 
-        # مسح الكاش
-        try:
-            st.cache_data.clear()
-        except Exception:
-            pass
-
-        # تحديث بيانات الجلسة
-        st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S")
+        # إعادة تحميل الشيتات فورًا
         reload_sheets_into_session()
-        st.success(f"✅ تم تحميل الملف بنجاح من {source} وتم مسح الكاش وإعادة التحميل.")
-        st.rerun()
+
+        # مسح كل الكاش وإعادة تشغيل التطبيق
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.success(f"✅ تم تحميل الملف بنجاح من {source} وتم مسح الكاش وإعادة التشغيل.")
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"⚠ فشل تحميل الملف من GitHub: {e}")
@@ -281,60 +278,53 @@ def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit
         st.error(f"⚠ فشل في حفظ الملف محليًا: {e}")
         return load_sheets_for_edit_uncached()
 
-    # مسح الكاش
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-
-    # رفع على GitHub
+    # رفع على GitHub (لو فيه توكين)
     token = None
     try:
         token = st.secrets["github"]["token"]
     except Exception:
         pass
 
-    if not token:
-        st.warning("🔒 GitHub token غير موجود في Streamlit secrets. التغييرات ستبقى محليًا فقط.")
-        reload_sheets_into_session()
-        return load_sheets_for_edit_uncached()
-
-    if not GITHUB_AVAILABLE:
-        st.error("PyGithub غير مثبت على البيئة. التعديلات ستبقى محليًا.")
-        reload_sheets_into_session()
-        return load_sheets_for_edit_uncached()
-
     try:
-        g = Github(token)
-        repo = g.get_repo(REPO_NAME)
-        with open(LOCAL_FILE, "rb") as f:
-            content = f.read()
+        if token and GITHUB_AVAILABLE:
+            g = Github(token)
+            repo = g.get_repo(REPO_NAME)
+            with open(LOCAL_FILE, "rb") as f:
+                content = f.read()
 
-        try:
-            contents = repo.get_contents(FILE_PATH, ref=BRANCH)
-            repo.update_file(
-                path=FILE_PATH,
-                message=commit_message,
-                content=content,
-                sha=contents.sha,
-                branch=BRANCH
-            )
-        except Exception:
-            repo.create_file(
-                path=FILE_PATH,
-                message=commit_message,
-                content=content,
-                branch=BRANCH
-            )
+            try:
+                contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+                repo.update_file(
+                    path=FILE_PATH,
+                    message=commit_message,
+                    content=content,
+                    sha=contents.sha,
+                    branch=BRANCH
+                )
+            except Exception:
+                repo.create_file(
+                    path=FILE_PATH,
+                    message=commit_message,
+                    content=content,
+                    branch=BRANCH
+                )
 
-        st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+            st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+        else:
+            st.warning("🔒 GitHub token غير موجود أو PyGithub غير مثبت. التغييرات ستبقى محليًا فقط.")
+
+        # بعد الحفظ — إعادة تحميل كاملة
         reload_sheets_into_session()
-        st.rerun()
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.experimental_rerun()
 
     except Exception as e:
         st.error(f"⚠ فشل الاتصال بـ GitHub: {e}")
         reload_sheets_into_session()
-        return load_sheets_for_edit_uncached()
+        st.cache_data.clear()
+        st.session_state.clear()
+        st.experimental_rerun()
 
 
 # -------------------------------
