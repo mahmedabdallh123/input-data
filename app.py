@@ -1,13 +1,11 @@
-# app.py - نسخة مُعدَّلة كاملة لمشكلة الكاش/التحديث
+# app.py - نسخة بدون كاش نهائيًا
 import streamlit as st
 import pandas as pd
 import json
 import os
 import io
 import requests
-import shutil
 import re
-import random
 from datetime import datetime, timedelta
 from base64 import b64decode
 
@@ -31,7 +29,6 @@ REPO_NAME = "mahmedabdallh123/input-data"
 BRANCH = "main"
 FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
-# استخدم raw.githubusercontent (أسرع في التجدد مع إضافة nocache لاحقاً)
 GITHUB_EXCEL_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
 
 # -------------------------------
@@ -102,29 +99,40 @@ def remaining_time(state, username):
     except:
         return None
 
-# ===============================
-# دوال التحديث المحسنة
-# ===============================
-
-def force_refresh_session_data():
-    """إعادة تحميل كامل للبيانات في الجلسة مع ضمان التحديث الفوري"""
-    # مسح كل الكاش المؤقت
+# -------------------------------
+# تحميل مباشر من الملف - بدون كاش
+# -------------------------------
+def load_all_sheets_direct():
+    """قراءة كل الشيتات مباشرة من الملف - بدون كاش"""
+    if not os.path.exists(LOCAL_FILE):
+        return {}
     try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-    
-    # إعادة تحميل البيانات من الملف المحلي
-    st.session_state["all_sheets"] = load_all_sheets_uncached()
-    st.session_state["sheets_edit"] = load_sheets_for_edit_uncached()
-    st.session_state["last_update"] = pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S.%f")
-    
-    # إعادة تعيين حالة العرض
-    if "show_results" in st.session_state:
-        st.session_state.show_results = False
+        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
+        for name, df in sheets.items():
+            df.columns = df.columns.str.strip()
+        return sheets
+    except Exception as e:
+        st.error(f"⚠ خطأ أثناء قراءة ملف Excel: {e}")
+        return {}
 
-def smart_github_download():
-    """تحميل ذكي من GitHub مع التحقق من التحديثات"""
+def load_sheets_for_edit_direct():
+    """قراءة الشيتات مباشرة للتحرير - بدون كاش"""
+    if not os.path.exists(LOCAL_FILE):
+        return {}
+    try:
+        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None, dtype=object)
+        for name, df in sheets.items():
+            df.columns = df.columns.str.strip()
+        return sheets
+    except Exception as e:
+        st.error(f"⚠ خطأ أثناء قراءة ملف Excel للتحرير: {e}")
+        return {}
+
+# -------------------------------
+# تحميل من GitHub مباشر
+# -------------------------------
+def download_from_github_direct():
+    """تحميل مباشر من GitHub بدون كاش"""
     try:
         # إضافة بارامتر فريد لتجنب الكاش
         timestamp = int(datetime.now().timestamp())
@@ -133,8 +141,7 @@ def smart_github_download():
         headers = {
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
-            "Expires": "0",
-            "User-Agent": "Mozilla/5.0 (compatible; CMMS-Refresh/1.0)"
+            "Expires": "0"
         }
         
         response = requests.get(url, headers=headers, timeout=30)
@@ -144,31 +151,57 @@ def smart_github_download():
         with open(LOCAL_FILE, "wb") as f:
             f.write(response.content)
             
-        # تحديث الجلسة فوراً
-        force_refresh_session_data()
         st.success("✅ تم التحديث بنجاح من GitHub")
         st.rerun()
         
     except Exception as e:
         st.error(f"❌ فشل التحديث: {e}")
-        # المحاولة بالنسخة المحلية إذا فشل التحميل
-        if os.path.exists(LOCAL_FILE):
-            force_refresh_session_data()
-            st.info("ℹ استخدام البيانات المحلية المخزنة")
 
-def safe_sheet_operation(operation_func, *args, **kwargs):
-    """تنفيذ آمن للعمليات على الشيتات مع التعامل مع الأخطاء"""
+# -------------------------------
+# حفظ مباشر + رفع إلى GitHub
+# -------------------------------
+def save_excel_direct(sheets_dict, commit_message="Update from Streamlit"):
+    """
+    يحفظ الملف محليًا مباشرة، ثم يحاول رفعه إلى GitHub
+    """
     try:
-        result = operation_func(*args, **kwargs)
-        # بعد أي عملية ناجحة، نحدث الجلسة
-        force_refresh_session_data()
-        return result
+        # حفظ محليًا مباشرة
+        with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
+            for name, sh in sheets_dict.items():
+                try:
+                    sh.to_excel(writer, sheet_name=name, index=False)
+                except Exception:
+                    sh.astype(object).to_excel(writer, sheet_name=name, index=False)
     except Exception as e:
-        st.error(f"❌ خطأ في العملية: {e}")
-        # محاولة استعادة البيانات الأصلية في حالة الخطأ
-        if os.path.exists(LOCAL_FILE):
-            force_refresh_session_data()
+        st.error(f"⚠ فشل في حفظ الملف محليًا: {e}")
         return False
+
+    # حاول الرفع
+    token = None
+    try:
+        token = st.secrets["github"]["token"]
+    except Exception:
+        token = None
+
+    if token and GITHUB_AVAILABLE:
+        try:
+            g = Github(token)
+            repo = g.get_repo(REPO_NAME)
+            with open(LOCAL_FILE, "rb") as f:
+                content = f.read()
+            # تحديث أو إنشاء
+            try:
+                contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+                repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
+            except Exception:
+                repo.create_file(path=FILE_PATH, message=commit_message, content=content, branch=BRANCH)
+            st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
+        except Exception as e:
+            st.error(f"⚠ حدث خطأ أثناء الرفع لـ GitHub: {e}")
+    else:
+        st.warning("🔒 GitHub token غير موجود أو PyGithub غير مثبت. الحفظ محليًا فقط.")
+
+    return True
 
 # -------------------------------
 # واجهة تسجيل الخروج / تسجيل الدخول
@@ -180,14 +213,12 @@ def logout_action():
         state[username]["active"] = False
         state[username].pop("login_time", None)
         save_state(state)
-    # نحتفظ فقط بمفاتيح الجلسة الأساسية التي تخص auth ثم نعيد تشغيل
     preserved = {}
     for k in ("logged_in", "username"):
         if k in st.session_state:
             preserved[k] = st.session_state[k]
     for k in list(st.session_state.keys()):
         st.session_state.pop(k, None)
-    # ملئ auth بقيم افتراضية آمنة
     if preserved:
         for k, v in preserved.items():
             st.session_state[k] = v
@@ -242,108 +273,6 @@ def login_ui():
         return True
 
 # -------------------------------
-# تحميل/حفظ الشيتات (الأساسيات)
-# -------------------------------
-
-def load_all_sheets_uncached():
-    """قراءة كل الشيتات من الملف المحلي (غير مخبأة)."""
-    if not os.path.exists(LOCAL_FILE):
-        return {}
-    try:
-        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
-        for name, df in sheets.items():
-            df.columns = df.columns.str.strip()
-        return sheets
-    except Exception as e:
-        st.error(f"⚠ خطأ أثناء قراءة ملف Excel: {e}")
-        return {}
-
-def load_sheets_for_edit_uncached():
-    """قراءة الشيتات مع dtype=object للواجهة القابلة للتحرير."""
-    if not os.path.exists(LOCAL_FILE):
-        return {}
-    try:
-        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None, dtype=object)
-        for name, df in sheets.items():
-            df.columns = df.columns.str.strip()
-        return sheets
-    except Exception as e:
-        st.error(f"⚠ خطأ أثناء قراءة ملف Excel للتحرير: {e}")
-        return {}
-
-@st.cache_data(show_spinner=False)
-def load_all_sheets(cache_buster=None):
-    """دالة مخبأة تعتمد على cache_buster لكي تعيد التحميل بعد تحديث last_update."""
-    return load_all_sheets_uncached()
-
-@st.cache_data(show_spinner=False)
-def load_sheets_for_edit(cache_buster=None):
-    return load_sheets_for_edit_uncached()
-
-# -------------------------------
-# تحميل من GitHub بدون كاش (ذكي)
-# -------------------------------
-def refresh_from_github():
-    """استدعاء الدالة الذكية للتحميل"""
-    smart_github_download()
-
-# -------------------------------
-# حفظ محلي + رفع إلى GitHub (آمن)
-# -------------------------------
-def save_local_excel_and_push(sheets_dict, commit_message="Update from Streamlit"):
-    """
-    يحفظ الملف محليًا، ثم يحاول رفعه إلى GitHub عبر PyGithub إذا التوكين متاح.
-    بعد ذلك يعيد تحميل الشيتات في الجلسة.
-    """
-    try:
-        # حفظ محليًا
-        with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
-            for name, sh in sheets_dict.items():
-                try:
-                    sh.to_excel(writer, sheet_name=name, index=False)
-                except Exception:
-                    sh.astype(object).to_excel(writer, sheet_name=name, index=False)
-    except Exception as e:
-        st.error(f"⚠ فشل في حفظ الملف محليًا: {e}")
-        return False
-
-    # امسح الكاش المؤقت
-    try:
-        st.cache_data.clear()
-    except Exception:
-        pass
-
-    # حاول الرفع
-    token = None
-    try:
-        token = st.secrets["github"]["token"]
-    except Exception:
-        token = None
-
-    if token and GITHUB_AVAILABLE:
-        try:
-            g = Github(token)
-            repo = g.get_repo(REPO_NAME)
-            with open(LOCAL_FILE, "rb") as f:
-                content = f.read()
-            # تحديث أو إنشاء
-            try:
-                contents = repo.get_contents(FILE_PATH, ref=BRANCH)
-                repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
-            except Exception:
-                repo.create_file(path=FILE_PATH, message=commit_message, content=content, branch=BRANCH)
-            st.success("✅ تم الحفظ والرفع على GitHub بنجاح.")
-        except Exception as e:
-            st.error(f"⚠ حدث خطأ أثناء الرفع لـ GitHub: {e}")
-            # نكمل ونستخدم النسخة المحلية
-    else:
-        st.warning("🔒 GitHub token غير موجود أو PyGithub غير مثبت. الحفظ محليًا فقط.")
-
-    # استخدام التحديث المحسن بدلاً من reload_sheets_into_session
-    force_refresh_session_data()
-    return True
-
-# -------------------------------
 # أدوات تنسيق ونصوص المساعدة
 # -------------------------------
 def normalize_name(s):
@@ -378,12 +307,12 @@ def style_table(row):
     return [highlight_cell(row[col], col) for col in row.index]
 
 # -------------------------------
-# دالة فحص الماكينة (عرض النتائج) - الإصدار المحسن
+# دالة فحص الماكينة - مباشرة من الملف
 # -------------------------------
-def check_machine_status(card_num, current_tons):
-    """دالة فحص محسنة - تجلب البيانات مباشرة من الملف في كل مرة"""
-    # نجلب البيانات مباشرة من الملف في كل مرة - بدون اعتماد على الجلسة
-    all_sheets = load_all_sheets_uncached()
+def check_machine_status_direct(card_num, current_tons):
+    """دالة فحص مباشرة من الملف بدون أي كاش"""
+    # تحميل مباشر من الملف في كل مرة
+    all_sheets = load_all_sheets_direct()
     
     if not all_sheets or "ServicePlan" not in all_sheets:
         st.error("❌ الملف لا يحتوي على شيت ServicePlan.")
@@ -398,9 +327,6 @@ def check_machine_status(card_num, current_tons):
     
     card_df = all_sheets[card_sheet_name]
 
-    if "view_option" not in st.session_state:
-        st.session_state.view_option = "الشريحة الحالية فقط"
-
     st.subheader("⚙ نطاق العرض")
     view_option = st.radio(
         "اختر نطاق العرض:",
@@ -409,8 +335,8 @@ def check_machine_status(card_num, current_tons):
         key="view_option"
     )
 
-    min_range = st.session_state.get("min_range", max(0, current_tons - 500))
-    max_range = st.session_state.get("max_range", current_tons + 500)
+    min_range = max(0, current_tons - 500)
+    max_range = current_tons + 500
     if view_option == "نطاق مخصص":
         col1, col2 = st.columns(2)
         with col1:
@@ -527,17 +453,12 @@ with st.sidebar:
 
     st.markdown("---")
     st.write("🔧 أدوات:")
-    if st.button("🔄 تحديث الملف من GitHub (RAW/API)"):
-        # استخدام الدالة الموحدة التي تتخطى الكاش
-        refresh_from_github()
+    if st.button("🔄 تحديث الملف من GitHub"):
+        download_from_github_direct()
     st.markdown("ملحوظة: تحميل الـ RAW يعمل بدون توكين، لكن الرفع يحتاج توكين في secrets.")
     
     st.markdown("---")
     st.subheader("📊 حالة النظام")
-    
-    # مؤشر آخر تحديث
-    if "last_update" in st.session_state:
-        st.info(f"🕒 آخر تحديث: {st.session_state.last_update}")
     
     # مؤشر وجود ملف محلي
     if os.path.exists(LOCAL_FILE):
@@ -560,32 +481,12 @@ with st.sidebar:
     if st.button("🚪 تسجيل الخروج"):
         logout_action()
 
-# تحميل أولي داخل الجلسة (إذا غير موجود)
-if "all_sheets" not in st.session_state:
-    # إذا الملف محليًا غير موجود حاول تحميل من GitHub أولًا (كخيار)
-    if not os.path.exists(LOCAL_FILE):
-        # نحاول تحميل (لن يفشل التطبيق)
-        try:
-            refresh_from_github()
-        except Exception:
-            pass
-    # الآن نحاول القراءة
-    try:
-        st.session_state["all_sheets"] = load_all_sheets(pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"))
-        st.session_state["sheets_edit"] = load_sheets_for_edit(pd.Timestamp.now().strftime("%Y-%m-%d %H:%M:%S"))
-    except Exception:
-        st.session_state["all_sheets"] = load_all_sheets_uncached()
-        st.session_state["sheets_edit"] = load_sheets_for_edit_uncached()
-
-all_sheets = st.session_state.get("all_sheets", {})
-sheets_edit = st.session_state.get("sheets_edit", {})
-
 # Tabs
 st.title("🏭 CMMS - Bail Yarn")
 tabs = st.tabs(["📊 عرض وفحص الماكينات", "🛠 تعديل وإدارة البيانات (GitHub)","⚙ إدارة المستخدمين"])
 
 # -------------------------------
-# Tab 1: عرض وفحص الماكينات - الإصدار المحسن
+# Tab 1: عرض وفحص الماكينات - مباشر من الملف
 # -------------------------------
 with tabs[0]:
     st.header("📊 عرض وفحص الماكينات")
@@ -601,14 +502,11 @@ with tabs[0]:
             current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100, key="current_tons_main")
 
         if st.button("عرض الحالة"):
-            st.session_state["show_results"] = True
-
-        if st.session_state.get("show_results", False):
-            # نستخدم الدالة المحسنة التي تجلب البيانات مباشرة من الملف
-            check_machine_status(st.session_state.card_num_main, st.session_state.current_tons_main)
+            # استدعاء مباشر للدالة التي تجلب البيانات من الملف مباشرة
+            check_machine_status_direct(card_num, current_tons)
 
 # -------------------------------
-# Tab 2: تعديل وإدارة البيانات
+# Tab 2: تعديل وإدارة البيانات - مباشر من الملف
 # -------------------------------
 with tabs[1]:
     st.header("🛠 تعديل وإدارة البيانات (GitHub)")
@@ -616,6 +514,9 @@ with tabs[1]:
     token_exists = bool(st.secrets.get("github", {}).get("token", None))
     can_push = (username == "admin") or (token_exists and GITHUB_AVAILABLE)
 
+    # تحميل البيانات مباشرة من الملف
+    sheets_edit = load_sheets_for_edit_direct()
+    
     if not sheets_edit:
         st.warning("❗ الملف المحلي غير موجود. اضغط تحديث من GitHub في الشريط الجانبي أولًا.")
     else:
@@ -638,8 +539,10 @@ with tabs[1]:
                 if not can_push:
                     st.warning("🚫 لا تملك صلاحية الرفع إلى GitHub من هذه الجلسة.")
                 sheets_edit[sheet_name] = edited_df.astype(object)
-                # حفظ/رفع وإعادة تحميل
-                safe_sheet_operation(save_local_excel_and_push, sheets_edit, f"Edit sheet {sheet_name} by {st.session_state.get('username')}")
+                # حفظ مباشر
+                if save_excel_direct(sheets_edit, f"Edit sheet {sheet_name} by {username}"):
+                    st.success("✅ تم الحفظ بنجاح!")
+                    st.rerun()
 
         # Tab2 - إضافة صف
         with tab2:
@@ -727,8 +630,10 @@ with tabs[1]:
                     df_new = pd.concat([df_top, new_row_df.reset_index(drop=True), df_bottom], ignore_index=True)
                     sheets_edit[sheet_name_add] = df_new.astype(object)
 
-                    # حفظ / رفع / إعادة تحميل
-                    safe_sheet_operation(save_local_excel_and_push, sheets_edit, f"Add new row under range {new_min_raw}-{new_max_raw} in {sheet_name_add} by {st.session_state.get('username')}")
+                    # حفظ مباشر
+                    if save_excel_direct(sheets_edit, f"Add new row under range {new_min_raw}-{new_max_raw} in {sheet_name_add} by {username}"):
+                        st.success("✅ تم الإضافة والحفظ بنجاح!")
+                        st.rerun()
 
         # Tab3 - إضافة عمود
         with tab3:
@@ -742,7 +647,9 @@ with tabs[1]:
                 if new_col_name:
                     df_col[new_col_name] = default_value
                     sheets_edit[sheet_name_col] = df_col.astype(object)
-                    safe_sheet_operation(save_local_excel_and_push, sheets_edit, f"Add new column '{new_col_name}' to {sheet_name_col} by {st.session_state.get('username')}")
+                    if save_excel_direct(sheets_edit, f"Add new column '{new_col_name}' to {sheet_name_col} by {username}"):
+                        st.success("✅ تم إضافة العمود والحفظ بنجاح!")
+                        st.rerun()
                 else:
                     st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
 
@@ -776,7 +683,9 @@ with tabs[1]:
                         else:
                             df_new = df_del.drop(rows_list).reset_index(drop=True)
                             sheets_edit[sheet_name_del] = df_new.astype(object)
-                            safe_sheet_operation(save_local_excel_and_push, sheets_edit, f"Delete rows {rows_list} from {sheet_name_del} by {st.session_state.get('username')}")
+                            if save_excel_direct(sheets_edit, f"Delete rows {rows_list} from {sheet_name_del} by {username}"):
+                                st.success("✅ تم الحذف والحفظ بنجاح!")
+                                st.rerun()
                     except Exception as e:
                         st.error(f"حدث خطأ أثناء الحذف: {e}")
 
