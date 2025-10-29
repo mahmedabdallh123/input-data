@@ -1,11 +1,20 @@
-# app.py - حل نهائي بدون GitHub مؤقت
+# app.py - نسخة بدون كاش وبدون مشاكل تحديث
 import streamlit as st
 import pandas as pd
 import json
 import os
 import io
+import requests
 import re
 from datetime import datetime, timedelta
+from base64 import b64decode
+
+# محاولة استيراد PyGithub (اختياري للرفع)
+try:
+    from github import Github
+    GITHUB_AVAILABLE = True
+except Exception:
+    GITHUB_AVAILABLE = False
 
 # ===============================
 # إعدادات عامة
@@ -15,7 +24,12 @@ STATE_FILE = "state.json"
 SESSION_DURATION = timedelta(minutes=10)
 MAX_ACTIVE_USERS = 2
 
+# إعدادات GitHub / ملفات
+REPO_NAME = "mahmedabdallh123/input-data"
+BRANCH = "main"
+FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
+GITHUB_EXCEL_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
 
 # -------------------------------
 # دوال الملفات والمستخدمين
@@ -86,48 +100,93 @@ def remaining_time(state, username):
         return None
 
 # -------------------------------
-# الدوال الأساسية - مباشرة من الملف
+# الدوال الأساسية - بدون أي كاش
 # -------------------------------
-def load_excel_direct():
-    """تحميل الملف مباشرة - تأكد من فتح الملف بشكل صحيح"""
+def load_excel_file():
+    """تحميل الملف مباشرة - بدون أي كاش أو تخزين"""
     if not os.path.exists(LOCAL_FILE):
-        st.error("❌ الملف غير موجود. تأكد من وجود الملف في المسار الصحيح.")
         return {}
-    
     try:
-        # محاولة فتح الملف بشكل مباشر
-        with open(LOCAL_FILE, 'rb') as f:
-            sheets = pd.read_excel(f, sheet_name=None)
-        
+        # فتح الملف مباشرة بدون أي cache
+        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
         for name, df in sheets.items():
             df.columns = df.columns.str.strip()
-        
-        st.success(f"✅ تم تحميل {len(sheets)} شيت بنجاح")
         return sheets
     except Exception as e:
-        st.error(f"❌ خطأ في قراءة الملف: {e}")
+        st.error(f"⚠ خطأ في قراءة الملف: {e}")
         return {}
 
-def save_excel_direct(sheets_dict, commit_message="تحديث"):
-    """حفظ الملف مباشرة مع تأكيد"""
+def load_excel_for_edit():
+    """تحميل الملف للتحرير مباشرة"""
+    if not os.path.exists(LOCAL_FILE):
+        return {}
     try:
-        # حفظ مباشر مع إغلاق الملف بشكل صحيح
-        with pd.ExcelWriter(LOCAL_FILE, engine='openpyxl') as writer:
-            for name, df in sheets_dict.items():
-                df.to_excel(writer, sheet_name=name, index=False)
-        
-        # التحقق من أن الملف تم حفظه
-        if os.path.exists(LOCAL_FILE):
-            file_size = os.path.getsize(LOCAL_FILE)
-            st.success(f"✅ تم الحفظ بنجاح! حجم الملف: {file_size} بايت")
-            return True
-        else:
-            st.error("❌ فشل في حفظ الملف")
-            return False
-            
+        sheets = pd.read_excel(LOCAL_FILE, sheet_name=None, dtype=object)
+        for name, df in sheets.items():
+            df.columns = df.columns.str.strip()
+        return sheets
     except Exception as e:
-        st.error(f"❌ خطأ في الحفظ: {e}")
+        st.error(f"⚠ خطأ في قراءة الملف للتحرير: {e}")
+        return {}
+
+def download_from_github():
+    """تحميل من GitHub وإعادة تحميل الصفحة فوراً"""
+    try:
+        timestamp = int(datetime.now().timestamp())
+        url = f"{GITHUB_EXCEL_RAW_BASE}?t={timestamp}"
+        
+        response = requests.get(url, timeout=30)
+        response.raise_for_status()
+        
+        # حفظ الملف
+        with open(LOCAL_FILE, "wb") as f:
+            f.write(response.content)
+            
+        st.success("✅ تم التحديث من GitHub بنجاح")
+        # إعادة تحميل الصفحة فوراً
+        st.rerun()
+        
+    except Exception as e:
+        st.error(f"❌ فشل التحديث: {e}")
+
+def save_excel_file(sheets_dict, commit_message="Update from Streamlit"):
+    """حفظ الملف مباشرة وإعادة تحميل الصفحة"""
+    try:
+        # حفظ مباشر
+        with pd.ExcelWriter(LOCAL_FILE, engine="openpyxl") as writer:
+            for name, sh in sheets_dict.items():
+                sh.to_excel(writer, sheet_name=name, index=False)
+    except Exception as e:
+        st.error(f"⚠ فشل في الحفظ: {e}")
         return False
+
+    # رفع إلى GitHub إذا أمكن
+    token = None
+    try:
+        token = st.secrets["github"]["token"]
+    except Exception:
+        token = None
+
+    if token and GITHUB_AVAILABLE:
+        try:
+            g = Github(token)
+            repo = g.get_repo(REPO_NAME)
+            with open(LOCAL_FILE, "rb") as f:
+                content = f.read()
+            try:
+                contents = repo.get_contents(FILE_PATH, ref=BRANCH)
+                repo.update_file(path=FILE_PATH, message=commit_message, content=content, sha=contents.sha, branch=BRANCH)
+            except Exception:
+                repo.create_file(path=FILE_PATH, message=commit_message, content=content, branch=BRANCH)
+            st.success("✅ تم الحفظ والرفع على GitHub")
+        except Exception as e:
+            st.error(f"⚠ خطأ في الرفع: {e}")
+    else:
+        st.success("✅ تم الحفظ محلياً")
+
+    # إعادة تحميل الصفحة فوراً
+    st.rerun()
+    return True
 
 # -------------------------------
 # واجهة المستخدم
@@ -139,6 +198,9 @@ def logout_action():
         state[username]["active"] = False
         state[username].pop("login_time", None)
         save_state(state)
+    
+    for k in list(st.session_state.keys()):
+        st.session_state.pop(k, None)
     
     st.session_state.logged_in = False
     st.session_state.username = None
@@ -227,17 +289,12 @@ def highlight_cell(val, col_name):
 def style_table(row):
     return [highlight_cell(row[col], col) for col in row.index]
 
-def check_machine_status_now(card_num, current_tons):
-    """فحص مباشر - بيقرأ الملف في اللحظة نفسها"""
+def check_machine_status(card_num, current_tons):
+    """فحص الماكينة - بتحميل الملف مباشرة في كل مرة"""
+    # تحميل الملف مباشرة - بدون أي cache
+    all_sheets = load_excel_file()
     
-    # تحميل الملف مباشرة قبل الفحص
-    all_sheets = load_excel_direct()
-    
-    if not all_sheets:
-        st.error("❌ لا يمكن تحميل الملف")
-        return
-    
-    if "ServicePlan" not in all_sheets:
+    if not all_sheets or "ServicePlan" not in all_sheets:
         st.error("❌ الملف لا يحتوي على شيت ServicePlan.")
         return
     
@@ -255,7 +312,7 @@ def check_machine_status_now(card_num, current_tons):
         "اختر نطاق العرض:",
         ("الشريحة الحالية فقط", "كل الشرائح الأقل", "كل الشرائح الأعلى", "نطاق مخصص", "كل الشرائح"),
         horizontal=True,
-        key=f"view_{card_num}_{current_tons}"
+        key="view_option"
     )
 
     min_range = max(0, current_tons - 500)
@@ -263,9 +320,9 @@ def check_machine_status_now(card_num, current_tons):
     if view_option == "نطاق مخصص":
         col1, col2 = st.columns(2)
         with col1:
-            min_range = st.number_input("من (طن):", min_value=0, step=100, value=min_range, key=f"min_{card_num}")
+            min_range = st.number_input("من (طن):", min_value=0, step=100, value=min_range, key="min_range")
         with col2:
-            max_range = st.number_input("إلى (طن):", min_value=min_range, step=100, value=max_range, key=f"max_{card_num}")
+            max_range = st.number_input("إلى (طن):", min_value=min_range, step=100, value=max_range, key="max_range")
 
     if view_option == "الشريحة الحالية فقط":
         selected_slices = service_plan_df[(service_plan_df["Min_Tones"] <= current_tons) & (service_plan_df["Max_Tones"] >= current_tons)]
@@ -342,10 +399,6 @@ def check_machine_status_now(card_num, current_tons):
         })
 
     result_df = pd.DataFrame(all_results).dropna(how="all").reset_index(drop=True)
-    
-    # إضافة مؤشر وقت التحميل
-    st.info(f"🕒 وقت تحميل البيانات: {datetime.now().strftime('%H:%M:%S')}")
-    
     st.markdown("### 📋 نتائج الفحص")
     st.dataframe(result_df.style.apply(style_table, axis=1), use_container_width=True)
 
@@ -379,18 +432,27 @@ with st.sidebar:
             logout_action()
 
     st.markdown("---")
+    st.write("🔧 أدوات:")
+    if st.button("🔄 تحديث الملف من GitHub"):
+        download_from_github()
+    
+    st.markdown("---")
     st.subheader("📊 حالة النظام")
     
     if os.path.exists(LOCAL_FILE):
         file_time = datetime.fromtimestamp(os.path.getmtime(LOCAL_FILE))
-        file_size = os.path.getsize(LOCAL_FILE)
-        st.success(f"📁 الملف: {file_time.strftime('%H:%M:%S')} | الحجم: {file_size} بايت")
-        
-        # زر لتحميل الملف مباشرة
-        if st.button("🔄 إعادة تحميل الملف"):
-            st.rerun()
+        st.success(f"📁 الملف المحلي: {file_time.strftime('%Y-%m-%d %H:%M')}")
     else:
-        st.error("❌ الملف غير موجود")
+        st.warning("📁 لا يوجد ملف محلي")
+    
+    try:
+        token = st.secrets.get("github", {}).get("token")
+        if token and GITHUB_AVAILABLE:
+            st.success("🔗 GitHub: متصل")
+        else:
+            st.info("🔗 GitHub: بدون توكين")
+    except:
+        st.error("🔗 GitHub: خطأ في التكوين")
     
     st.markdown("---")
     if st.button("🚪 تسجيل الخروج"):
@@ -407,7 +469,7 @@ with tabs[0]:
     st.header("📊 عرض وفحص الماكينات")
     
     if not os.path.exists(LOCAL_FILE):
-        st.error("❌ الملف غير موجود. تأكد من وجود الملف في المجلد.")
+        st.warning("❗ الملف المحلي غير موجود. استخدم 'تحديث الملف من GitHub' في الشريط الجانبي.")
     else:
         col1, col2 = st.columns(2)
         with col1:
@@ -415,9 +477,9 @@ with tabs[0]:
         with col2:
             current_tons = st.number_input("عدد الأطنان الحالية:", min_value=0, step=100, key="current_tons_main")
 
-        if st.button("🔍 فحص الحالة الآن"):
-            # فحص مباشر في اللحظة نفسها
-            check_machine_status_now(card_num, current_tons)
+        if st.button("عرض الحالة"):
+            # ندخل البيانات مباشرة للدالة بدون أي وسيط
+            check_machine_status(card_num, current_tons)
 
 # -------------------------------
 # Tab 2: تعديل وإدارة البيانات
@@ -425,53 +487,113 @@ with tabs[0]:
 with tabs[1]:
     st.header("🛠 تعديل وإدارة البيانات")
     username = st.session_state.get("username")
+    token_exists = bool(st.secrets.get("github", {}).get("token", None))
+    can_push = (username == "admin") or (token_exists and GITHUB_AVAILABLE)
 
-    # تحميل البيانات مباشرة
-    sheets_data = load_excel_direct()
+    # تحميل البيانات مباشرة للتحرير
+    sheets_edit = load_excel_for_edit()
     
-    if not sheets_data:
-        st.error("❌ لا يمكن تحميل البيانات")
+    if not sheets_edit:
+        st.warning("❗ الملف المحلي غير موجود. اضغط تحديث من GitHub في الشريط الجانبي أولًا.")
     else:
-        tab1, tab2 = st.tabs(["✏ تعديل البيانات", "➕ إضافة صف جديد"])
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "عرض وتعديل شيت",
+            "إضافة صف جديد",
+            "إضافة عمود جديد",
+            "🗑 حذف صف"
+        ])
 
         # Tab1 - تعديل وعرض
         with tab1:
             st.subheader("✏ تعديل البيانات")
-            sheet_name = st.selectbox("اختر الشيت:", list(sheets_data.keys()), key="edit_sheet")
-            
-            if sheet_name in sheets_data:
-                df = sheets_data[sheet_name].copy()
-                st.write(f"عدد الصفوف: {len(df)}")
-                
-                edited_df = st.data_editor(df, num_rows="dynamic", key=f"editor_{sheet_name}")
+            sheet_name = st.selectbox("اختر الشيت:", list(sheets_edit.keys()), key="edit_sheet")
+            df = sheets_edit[sheet_name].astype(str)
 
-                if st.button("💾 حفظ التعديلات", key=f"save_{sheet_name}"):
-                    sheets_data[sheet_name] = edited_df
-                    if save_excel_direct(sheets_data, f"تعديل {sheet_name} بواسطة {username}"):
-                        st.balloons()
-                        st.success("✅ تم الحفظ بنجاح! انتقل إلى تبويب الفحص لرؤية التغييرات.")
+            edited_df = st.data_editor(df, num_rows="dynamic")
+
+            if st.button("💾 حفظ التعديلات", key=f"save_edit_{sheet_name}"):
+                if not can_push:
+                    st.warning("🚫 لا تملك صلاحية الرفع إلى GitHub من هذه الجلسة.")
+                sheets_edit[sheet_name] = edited_df.astype(object)
+                save_excel_file(sheets_edit, f"Edit sheet {sheet_name} by {username}")
 
         # Tab2 - إضافة صف
         with tab2:
             st.subheader("➕ إضافة صف جديد")
-            sheet_name_add = st.selectbox("اختر الشيت:", list(sheets_data.keys()), key="add_sheet")
-            
-            if sheet_name_add in sheets_data:
-                df_add = sheets_data[sheet_name_add].copy()
-                
-                st.markdown("أدخل بيانات الصف الجديد:")
-                new_data = {}
-                for col in df_add.columns:
-                    new_data[col] = st.text_input(f"{col}", key=f"new_{sheet_name_add}_{col}")
+            sheet_name_add = st.selectbox("اختر الشيت لإضافة صف:", list(sheets_edit.keys()), key="add_sheet")
+            df_add = sheets_edit[sheet_name_add].astype(str).reset_index(drop=True)
+            st.markdown("أدخل بيانات الحدث:")
 
-                if st.button("💾 إضافة الصف", key=f"add_{sheet_name_add}"):
-                    new_row = pd.DataFrame([new_data])
-                    df_new = pd.concat([df_add, new_row], ignore_index=True)
-                    sheets_data[sheet_name_add] = df_new
-                    
-                    if save_excel_direct(sheets_data, f"إضافة صف في {sheet_name_add} بواسطة {username}"):
-                        st.balloons()
-                        st.success("✅ تم الإضافة بنجاح! انتقل إلى تبويب الفحص لرؤية التغييرات.")
+            new_data = {}
+            for col in df_add.columns:
+                new_data[col] = st.text_input(f"{col}", key=f"add_{sheet_name_add}_{col}")
+
+            if st.button("💾 إضافة الصف الجديد", key=f"add_row_{sheet_name_add}"):
+                new_row_df = pd.DataFrame([new_data]).astype(str)
+                # البحث عن أعمدة الرينج
+                min_col, max_col = None, None
+                for c in df_add.columns:
+                    c_low = c.strip().lower()
+                    if c_low in ("min_tones", "min_tone", "min tones", "min"):
+                        min_col = c
+                    if c_low in ("max_tones", "max_tone", "max tones", "max"):
+                        max_col = c
+
+                if not min_col or not max_col:
+                    st.error("⚠ لم يتم العثور على أعمدة Min_Tones و/أو Max_Tones في الشيت.")
+                else:
+                    # إضافة الصف في النهاية
+                    df_new = pd.concat([df_add, new_row_df], ignore_index=True)
+                    sheets_edit[sheet_name_add] = df_new.astype(object)
+                    save_excel_file(sheets_edit, f"Add new row in {sheet_name_add} by {username}")
+
+        # Tab3 - إضافة عمود
+        with tab3:
+            st.subheader("🆕 إضافة عمود جديد")
+            sheet_name_col = st.selectbox("اختر الشيت لإضافة عمود:", list(sheets_edit.keys()), key="add_col_sheet")
+            df_col = sheets_edit[sheet_name_col].astype(str)
+            new_col_name = st.text_input("اسم العمود الجديد:")
+            default_value = st.text_input("القيمة الافتراضية (اختياري):", "")
+
+            if st.button("💾 إضافة العمود الجديد", key=f"add_col_{sheet_name_col}"):
+                if new_col_name:
+                    df_col[new_col_name] = default_value
+                    sheets_edit[sheet_name_col] = df_col.astype(object)
+                    save_excel_file(sheets_edit, f"Add new column '{new_col_name}' to {sheet_name_col} by {username}")
+                else:
+                    st.warning("⚠ الرجاء إدخال اسم العمود الجديد.")
+
+        # Tab4 - حذف صف
+        with tab4:
+            st.subheader("🗑 حذف صف من الشيت")
+            sheet_name_del = st.selectbox("اختر الشيت:", list(sheets_edit.keys()), key="delete_sheet")
+            df_del = sheets_edit[sheet_name_del].astype(str).reset_index(drop=True)
+
+            st.markdown("### 📋 بيانات الشيت الحالية")
+            st.dataframe(df_del)
+
+            st.markdown("### ✏ اختر الصفوف للحذف:")
+            rows_to_delete = st.text_input("أرقام الصفوف مفصولة بفاصلة (مثلاً: 0,2,5):")
+            confirm_delete = st.checkbox("✅ أؤكد الحذف")
+
+            if st.button("🗑 تنفيذ الحذف", key=f"delete_rows_{sheet_name_del}"):
+                if rows_to_delete.strip() == "":
+                    st.warning("⚠ الرجاء إدخال رقم الصف أو أكثر.")
+                elif not confirm_delete:
+                    st.warning("⚠ برجاء تأكيد الحذف أولاً.")
+                else:
+                    try:
+                        rows_list = [int(x.strip()) for x in rows_to_delete.split(",") if x.strip().isdigit()]
+                        rows_list = [r for r in rows_list if 0 <= r < len(df_del)]
+
+                        if not rows_list:
+                            st.warning("⚠ لم يتم العثور على صفوف صحيحة.")
+                        else:
+                            df_new = df_del.drop(rows_list).reset_index(drop=True)
+                            sheets_edit[sheet_name_del] = df_new.astype(object)
+                            save_excel_file(sheets_edit, f"Delete rows {rows_list} from {sheet_name_del} by {username}")
+                    except Exception as e:
+                        st.error(f"حدث خطأ أثناء الحذف: {e}")
 
 # -------------------------------
 # Tab 3: إدارة المستخدمين
@@ -486,27 +608,28 @@ with tabs[2]:
         st.write("المستخدمين الحاليين:", list(users.keys()))
     else:
         st.subheader("🔐 المستخدمين الموجودين")
-        st.dataframe(pd.DataFrame([{"username": k, "password": "*"} for k in users.keys()]))
+        st.dataframe(pd.DataFrame([{"username": k, "password": v.get("password","")} for k,v in users.items()]))
         
         st.markdown("### ➕ إضافة مستخدم جديد")
         new_user = st.text_input("اسم المستخدم الجديد:")
         new_pass = st.text_input("كلمة المرور:", type="password")
         if st.button("إضافة مستخدم"):
-            if new_user and new_pass:
+            if new_user.strip() == "" or new_pass.strip() == "":
+                st.warning("الرجاء إدخال اسم وكلمة مرور.")
+            else:
                 if new_user in users:
-                    st.warning("⚠ المستخدم موجود بالفعل")
+                    st.warning("هذا المستخدم موجود بالفعل.")
                 else:
                     users[new_user] = {"password": new_pass}
                     save_users(users)
-                    st.success("✅ تم الإضافة")
+                    st.success("✅ تم إضافة المستخدم.")
                     st.rerun()
-            else:
-                st.warning("⚠ أدخل اسم المستخدم وكلمة المرور")
 
         st.markdown("### 🗑 حذف مستخدم")
         del_user = st.selectbox("اختر مستخدم للحذف:", [u for u in users.keys() if u != "admin"])
         if st.button("حذف المستخدم"):
-            users.pop(del_user, None)
-            save_users(users)
-            st.success("✅ تم الحذف")
-            st.rerun()
+            if del_user in users:
+                users.pop(del_user, None)
+                save_users(users)
+                st.success("✅ تم الحذف.")
+                st.rerun()
