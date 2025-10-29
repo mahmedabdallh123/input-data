@@ -23,7 +23,7 @@ except Exception:
 USERS_FILE = "users.json"
 STATE_FILE = "state.json"
 SESSION_DURATION = timedelta(minutes=30)
-MAX_ACTIVE_USERS = 5
+MAX_ACTIVE_USERS = 3
 
 # إعدادات GitHub
 REPO_NAME = "mahmedabdallh123/input-data"
