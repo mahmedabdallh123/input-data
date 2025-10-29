@@ -1,4 +1,4 @@
-# app.py - إصلاح الخطأ في قسم التقارير
+
 import streamlit as st
 import pandas as pd
 import json
@@ -564,11 +564,11 @@ with st.sidebar:
             logout_action()
 
     st.markdown("---")
-    st.subheader("🔄 مزامنة GitHub")
+    st.subheader("🔄 refresh data")
     
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("📥 تحميل", help="تحميل أحدث نسخة من GitHub"):
+        if st.button("📥 تحميل", help="load data"):
             if download_from_github():
                 st.rerun()
     
@@ -1087,9 +1087,9 @@ with st.sidebar.expander("ℹ المساعدة والدعم"):
     - يمكن العمل من أي مكان
     
     *📞 الدعم الفني:*
-    - في حالة وجود مشاكل
-    - تأكد من اتصال GitHub
-    - تحقق من صحة البيانات
+    -   في حاله وجود مشاكل او محتاج دعم فني مقترح يرجي تواصل عبر واتساب (01274424062)
+    
+    
     """)
 
 st.markdown("---")
