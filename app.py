@@ -170,6 +170,10 @@ def safe_sheet_operation(operation_func, *args, **kwargs):
             force_refresh_session_data()
         return False
 
+def get_fresh_sheets():
+    """جلب البيانات الطازجة مباشرة من الملف (بدون الاعتماد على الجلسة)"""
+    return load_all_sheets_uncached()
+
 # -------------------------------
 # واجهة تسجيل الخروج / تسجيل الدخول
 # -------------------------------
@@ -380,7 +384,11 @@ def style_table(row):
 # -------------------------------
 # دالة فحص الماكينة (عرض النتائج)
 # -------------------------------
-def check_machine_status(card_num, current_tons, all_sheets):
+def check_machine_status(card_num, current_tons, all_sheets=None):
+    # بدل ما نعتمد على البيانات القديمة في الجلسة، نحمل مباشرة من الملف
+    if all_sheets is None:
+        all_sheets = load_all_sheets_uncached()  # نجيب البيانات المباشرة من الملف
+    
     if not all_sheets or "ServicePlan" not in all_sheets:
         st.error("❌ الملف لا يحتوي على شيت ServicePlan.")
         return
@@ -582,7 +590,11 @@ tabs = st.tabs(["📊 عرض وفحص الماكينات", "🛠 تعديل وإ
 # -------------------------------
 with tabs[0]:
     st.header("📊 عرض وفحص الماكينات")
-    if not all_sheets:
+    
+    # نجيب البيانات الطازجة مباشرة من الملف
+    fresh_sheets = get_fresh_sheets()
+    
+    if not fresh_sheets:
         st.warning("❗ الملف المحلي غير موجود أو فارغ. استخدم 'تحديث الملف من GitHub' في الشريط الجانبي.")
     else:
         col1, col2 = st.columns(2)
@@ -595,7 +607,8 @@ with tabs[0]:
             st.session_state["show_results"] = True
 
         if st.session_state.get("show_results", False):
-            check_machine_status(st.session_state.card_num_main, st.session_state.current_tons_main, all_sheets)
+            # نستخدم البيانات الطازجة مباشرة من الملف
+            check_machine_status(st.session_state.card_num_main, st.session_state.current_tons_main, fresh_sheets)
 
 # -------------------------------
 # Tab 2: تعديل وإدارة البيانات
