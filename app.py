@@ -877,7 +877,7 @@ with tabs[2]:
             st.metric("السعة المتاحة", f"{MAX_ACTIVE_USERS} مستخدم")
 
 # -------------------------------
-# Tab 4: التقارير والإحصائيات - الإصدار المعدل
+# Tab 4: التقارير والإحصائيات - الإصدار المصحح
 # -------------------------------
 with tabs[3]:
     st.header("📈 التقارير والإحصائيات")
@@ -888,7 +888,9 @@ with tabs[3]:
         with st.spinner("🔄 جاري تحميل البيانات..."):
             sheets_data = load_excel_fresh()
         
-        if sheets_data:
+        if not sheets_data:
+            st.error("❌ لا يمكن تحميل البيانات من الملف")
+        else:
             col1, col2, col3 = st.columns(3)
             
             with col1:
@@ -905,27 +907,35 @@ with tabs[3]:
             
             st.markdown("---")
             
-            # تحليل شيتات الماكينات - الإصدار المعدل
+            # تحليل شيتات الماكينات - الإصدار المصحح
             st.subheader("📋 تحليل شيتات الماكينات")
-            machine_data = []
             
-            for sheet_name in card_sheets:
-                df = sheets_data[sheet_name]
-                first_date, last_date = safe_date_analysis(df, 'Date')
+            if card_sheets:
+                machine_data = []
                 
-                machine_data.append({
-                    "الشيت": sheet_name,
-                    "عدد الصفوف": len(df),
-                    "عدد الأعمدة": len(df.columns),
-                    "أول تاريخ": first_date,
-                    "آخر تاريخ": last_date
-                })
+                for sheet_name in card_sheets:
+                    df = sheets_data[sheet_name]
+                    
+                    # استخدام الدالة المحسنة لتحليل التواريخ
+                    first_date, last_date = safe_date_analysis(df, 'Date')
+                    
+                    machine_data.append({
+                        "الشيت": sheet_name,
+                        "عدد الصفوف": len(df),
+                        "عدد الأعمدة": len(df.columns),
+                        "أول تاريخ": first_date,
+                        "آخر تاريخ": last_date
+                    })
+                
+                if machine_data:
+                    machine_df = pd.DataFrame(machine_data)
+                    st.dataframe(machine_df, use_container_width=True)
+                else:
+                    st.info("📭 لا توجد بيانات لشيتات الماكينات")
+            else:
+                st.info("📭 لا توجد شيتات ماكينات (Card) للتحليل")
             
-            if machine_data:
-                machine_df = pd.DataFrame(machine_data)
-                st.dataframe(machine_df, use_container_width=True)
-            
-            # ServicePlan analysis - الإصدار المعدل
+            # ServicePlan analysis - الإصدار المصحح
             st.subheader("📊 تحليل خطط الصيانة")
             if "ServicePlan" in sheets_data:
                 service_df = sheets_data["ServicePlan"]
@@ -937,57 +947,116 @@ with tabs[3]:
                     
                     # حساب نطاق الأطنان بشكل آمن
                     try:
-                        min_tones = service_df['Min_Tones'].min()
-                        max_tones = service_df['Max_Tones'].max()
-                        st.write(f"- نطاق الأطنان: {min_tones} إلى {max_tones}")
-                    except:
-                        st.write("- نطاق الأطنان: غير متوفر")
+                        if 'Min_Tones' in service_df.columns and 'Max_Tones' in service_df.columns:
+                            min_tones = service_df['Min_Tones'].min()
+                            max_tones = service_df['Max_Tones'].max()
+                            st.write(f"- نطاق الأطنان: {min_tones} إلى {max_tones}")
+                        else:
+                            st.write("- نطاق الأطنان: غير متوفر")
+                    except Exception as e:
+                        st.write(f"- نطاق الأطنان: خطأ في الحساب - {e}")
                 
                 with col2:
                     if 'Service' in service_df.columns:
                         try:
-                            services = service_df['Service'].str.split('[+,]').explode().str.strip()
-                            service_counts = services.value_counts()
-                            st.write("*الخدمات الأكثر تكراراً:*")
-                            for service, count in service_counts.head(5).items():
-                                st.write(f"- {service}: {count} مرة")
-                        except:
-                            st.write("- تحليل الخدمات: غير متوفر")
+                            # تحويل القيم إلى نص قبل التقسيم
+                            services = service_df['Service'].fillna('').astype(str)
+                            services_split = services.str.split('[+,]').explode().str.strip()
+                            services_split = services_split[services_split != '']
+                            
+                            if not services_split.empty:
+                                service_counts = services_split.value_counts()
+                                st.write("*الخدمات الأكثر تكراراً:*")
+                                for service, count in service_counts.head(5).items():
+                                    st.write(f"- {service}: {count} مرة")
+                            else:
+                                st.write("- لا توجد خدمات للتحليل")
+                        except Exception as e:
+                            st.write(f"- تحليل الخدمات: خطأ - {e}")
+                    else:
+                        st.write("- تحليل الخدمات: عمود الخدمات غير موجود")
+            else:
+                st.info("📭 لا يوجد شيت ServicePlan للتحليل")
             
-            # تنزيل التقارير
+            # إحصائيات إضافية
+            st.markdown("---")
+            st.subheader("📈 إحصائيات إضافية")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                st.write("*معلومات الشيتات:*")
+                for sheet_name, df in list(sheets_data.items())[:5]:  # عرض أول 5 شيتات فقط
+                    st.write(f"- {sheet_name}: {len(df)} صف، {len(df.columns)} عمود")
+                
+                if len(sheets_data) > 5:
+                    st.write(f"- ... و{len(sheets_data) - 5} شيتات أخرى")
+            
+            with col2:
+                st.write("*حالة النظام:*")
+                st.write(f"- وقت التحميل: {datetime.now().strftime('%H:%M:%S')}")
+                if os.path.exists(LOCAL_FILE):
+                    st.write(f"- حجم الملف: {os.path.getsize(LOCAL_FILE):,} بايت")
+                active_users = len([u for u, info in load_state().items() if info.get('active')])
+                st.write(f"- عدد المستخدمين النشطين: {active_users}")
+            
+            # تنزيل التقارير - الإصدار المصحح
             st.markdown("---")
             st.subheader("📥 تنزيل التقارير")
             
             report_type = st.selectbox("اختر نوع التقرير:", 
-                                     ["ملخص عام", "تحليل الماكينات", "خطط الصيانة"])
+                                     ["ملخص عام", "تحليل الماكينات", "خطط الصيانة", "جميع البيانات"])
             
-            if st.button("🔄 إنشاء التقرير", type="primary"):
+            if st.button("🔄 إنشاء التقرير", type="primary", key="generate_report"):
                 with st.spinner("جاري إنشاء التقرير..."):
                     try:
-                        if report_type == "ملخص عام":
-                            report_data = {
-                                "إجمالي الشيتات": total_sheets,
-                                "إجمالي الصفوف": total_rows,
-                                "شيتات الماكينات": len(card_sheets),
-                                "وقت الإنشاء": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            report_df = pd.DataFrame([report_data])
-                        elif report_type == "تحليل الماكينات":
-                            report_df = machine_df
-                        else:
-                            report_df = service_df
-                        
                         buffer = io.BytesIO()
-                        report_df.to_excel(buffer, index=False, engine="openpyxl")
                         
+                        with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                            if report_type == "ملخص عام":
+                                summary_data = {
+                                    "الإحصائية": [
+                                        "إجمالي الشيتات", 
+                                        "إجمالي الصفوف", 
+                                        "شيتات الماكينات",
+                                        "وقت الإنشاء"
+                                    ],
+                                    "القيمة": [
+                                        total_sheets,
+                                        total_rows,
+                                        len(card_sheets),
+                                        datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                                    ]
+                                }
+                                pd.DataFrame(summary_data).to_excel(writer, sheet_name="ملخص عام", index=False)
+                                
+                            elif report_type == "تحليل الماكينات" and card_sheets:
+                                if 'machine_df' in locals():
+                                    machine_df.to_excel(writer, sheet_name="تحليل الماكينات", index=False)
+                                else:
+                                    st.warning("⚠ لا توجد بيانات لتحليل الماكينات")
+                                    return
+                                
+                            elif report_type == "خطط الصيانة" and "ServicePlan" in sheets_data:
+                                service_df.to_excel(writer, sheet_name="خطط الصيانة", index=False)
+                                
+                            elif report_type == "جميع البيانات":
+                                for sheet_name, df in sheets_data.items():
+                                    # تقليل طول اسم الشيت إذا كان طويلاً جداً
+                                    safe_sheet_name = sheet_name[:31]  # Excel limit
+                                    df.to_excel(writer, sheet_name=safe_sheet_name, index=False)
+                        
+                        # تقديم زر التحميل فقط إذا كان التقرير يحتوي على بيانات
                         st.download_button(
                             label="💾 تحميل التقرير",
                             data=buffer.getvalue(),
                             file_name=f"report_{report_type}{datetime.now().strftime('%Y%m%d%H%M')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_report"
                         )
+                        
                     except Exception as e:
-                        st.error(f"❌ خطأ في إنشاء التقرير: {e}")
+                        st.error(f"❌ خطأ في إنشاء التقرير: {str(e)}")
 
 # -------------------------------
 # تذييل الصفحة والمساعدة
