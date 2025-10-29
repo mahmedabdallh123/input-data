@@ -807,4 +807,4 @@ with tabs[2]:
                 users.pop(del_user, None)
                 save_users(users)
                 st.success("✅ تم الحذف.")
-                st.rerun()
+                st.rerun()
