@@ -170,10 +170,6 @@ def safe_sheet_operation(operation_func, *args, **kwargs):
             force_refresh_session_data()
         return False
 
-def get_fresh_sheets():
-    """جلب البيانات الطازجة مباشرة من الملف (بدون الاعتماد على الجلسة)"""
-    return load_all_sheets_uncached()
-
 # -------------------------------
 # واجهة تسجيل الخروج / تسجيل الدخول
 # -------------------------------
@@ -382,21 +378,24 @@ def style_table(row):
     return [highlight_cell(row[col], col) for col in row.index]
 
 # -------------------------------
-# دالة فحص الماكينة (عرض النتائج)
+# دالة فحص الماكينة (عرض النتائج) - الإصدار المحسن
 # -------------------------------
-def check_machine_status(card_num, current_tons, all_sheets=None):
-    # بدل ما نعتمد على البيانات القديمة في الجلسة، نحمل مباشرة من الملف
-    if all_sheets is None:
-        all_sheets = load_all_sheets_uncached()  # نجيب البيانات المباشرة من الملف
+def check_machine_status(card_num, current_tons):
+    """دالة فحص محسنة - تجلب البيانات مباشرة من الملف في كل مرة"""
+    # نجلب البيانات مباشرة من الملف في كل مرة - بدون اعتماد على الجلسة
+    all_sheets = load_all_sheets_uncached()
     
     if not all_sheets or "ServicePlan" not in all_sheets:
         st.error("❌ الملف لا يحتوي على شيت ServicePlan.")
         return
+    
     service_plan_df = all_sheets["ServicePlan"]
     card_sheet_name = f"Card{card_num}"
+    
     if card_sheet_name not in all_sheets:
         st.warning(f"⚠ لا يوجد شيت باسم {card_sheet_name}")
         return
+    
     card_df = all_sheets[card_sheet_name]
 
     if "view_option" not in st.session_state:
@@ -586,15 +585,13 @@ st.title("🏭 CMMS - Bail Yarn")
 tabs = st.tabs(["📊 عرض وفحص الماكينات", "🛠 تعديل وإدارة البيانات (GitHub)","⚙ إدارة المستخدمين"])
 
 # -------------------------------
-# Tab 1: عرض وفحص الماكينات
+# Tab 1: عرض وفحص الماكينات - الإصدار المحسن
 # -------------------------------
 with tabs[0]:
     st.header("📊 عرض وفحص الماكينات")
     
-    # نجيب البيانات الطازجة مباشرة من الملف
-    fresh_sheets = get_fresh_sheets()
-    
-    if not fresh_sheets:
+    # تحقق من وجود الملف أولاً
+    if not os.path.exists(LOCAL_FILE):
         st.warning("❗ الملف المحلي غير موجود أو فارغ. استخدم 'تحديث الملف من GitHub' في الشريط الجانبي.")
     else:
         col1, col2 = st.columns(2)
@@ -607,8 +604,8 @@ with tabs[0]:
             st.session_state["show_results"] = True
 
         if st.session_state.get("show_results", False):
-            # نستخدم البيانات الطازجة مباشرة من الملف
-            check_machine_status(st.session_state.card_num_main, st.session_state.current_tons_main, fresh_sheets)
+            # نستخدم الدالة المحسنة التي تجلب البيانات مباشرة من الملف
+            check_machine_status(st.session_state.card_num_main, st.session_state.current_tons_main)
 
 # -------------------------------
 # Tab 2: تعديل وإدارة البيانات
