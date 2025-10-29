@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import json
@@ -31,6 +30,32 @@ BRANCH = "main"
 FILE_PATH = "Machine_Service_Lookup.xlsx"
 LOCAL_FILE = "Machine_Service_Lookup.xlsx"
 GITHUB_EXCEL_RAW_BASE = f"https://raw.githubusercontent.com/{REPO_NAME}/{BRANCH}/{FILE_PATH}"
+
+# -------------------------------
+# دوال مسح الذاكرة المؤقتة
+# -------------------------------
+def clear_cache_and_reload():
+    """مسح الذاكرة المؤقتة وإعادة تحميل البيانات"""
+    try:
+        # مسح ذاكرة التخزين المؤقت لـ pandas
+        if hasattr(pd, 'read_excel') and hasattr(pd.read_excel, 'cache_clear'):
+            pd.read_excel.cache_clear()
+        
+        # إعادة تعيين حالة الجلسة
+        keys_to_clear = ['sheets_data', 'excel_data', 'last_loaded']
+        for key in keys_to_clear:
+            if key in st.session_state:
+                del st.session_state[key]
+        
+        # إضافة تأخير بسيط لضمان مسح الذاكرة المؤقتة
+        time.sleep(1)
+        
+        st.success("✅ تم تحديث البيانات بنجاح")
+        st.rerun()
+        return True
+    except Exception as e:
+        st.error(f"❌ خطأ في مسح الذاكرة المؤقتة: {e}")
+        return False
 
 # -------------------------------
 # دوال الملفات والمستخدمين
@@ -115,9 +140,14 @@ def load_excel_fresh():
         return {}
     
     try:
+        # إضافة طابع زمني لمنع التخزين المؤقت
+        timestamp = int(time.time())
         sheets = pd.read_excel(LOCAL_FILE, sheet_name=None)
         for name, df in sheets.items():
             df.columns = df.columns.str.strip()
+        
+        # تخزين وقت التحميل الأخير
+        st.session_state.last_loaded = timestamp
         return sheets
     except Exception as e:
         st.error(f"❌ خطأ في قراءة الملف: {e}")
@@ -142,6 +172,7 @@ def download_from_github():
         timestamp = int(time.time())
         url = f"{GITHUB_EXCEL_RAW_BASE}?t={timestamp}"
         
+        st.info("🔄 جاري تحميل أحدث نسخة من GitHub...")
         response = requests.get(url, timeout=30)
         response.raise_for_status()
         
@@ -151,6 +182,9 @@ def download_from_github():
         if os.path.exists(LOCAL_FILE):
             file_size = os.path.getsize(LOCAL_FILE)
             st.success(f"✅ تم التحديث من GitHub | الحجم: {file_size} بايت")
+            
+            # مسح الذاكرة المؤقتة بعد التحديث
+            clear_cache_and_reload()
             return True
         else:
             st.error("❌ فشل في حفظ الملف المحلي")
@@ -176,7 +210,10 @@ def save_to_github(sheets_dict, commit_message="تحديث من التطبيق")
         file_size = os.path.getsize(LOCAL_FILE)
         st.success(f"✅ تم الحفظ المحلي | الحجم: {file_size} بايت")
         
-        # 3. رفع إلى GitHub
+        # 3. تحديث الذاكرة المؤقتة مباشرة بعد الحفظ
+        clear_cache_and_reload()
+        
+        # 4. رفع إلى GitHub
         token = None
         try:
             token = st.secrets["github"]["token"]
@@ -564,16 +601,21 @@ with st.sidebar:
             logout_action()
 
     st.markdown("---")
-    st.subheader("🔄 refresh data")
+    st.subheader("🔄 تحديث البيانات")
     
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     with col1:
-        if st.button("📥 تحميل", help="load data"):
+        if st.button("📥 تحميل حديث", help="تحميل أحدث نسخة من GitHub", use_container_width=True):
             if download_from_github():
-                st.rerun()
-    
+                st.success("✅ تم تحميل أحدث نسخة")
+
     with col2:
-        if st.button("🔄 إعادة تحميل", help="إعادة تحميل الصفحة"):
+        if st.button("🔄 تحديث البيانات", help="تحديث البيانات من الملف المحلي", use_container_width=True):
+            if clear_cache_and_reload():
+                st.success("✅ تم تحديث البيانات")
+
+    with col3:
+        if st.button("🔄 إعادة تحميل", help="إعادة تحميل الصفحة", use_container_width=True):
             st.rerun()
     
     st.markdown("---")
@@ -628,6 +670,12 @@ tabs = st.tabs(["📊 عرض وفحص الماكينات", "🛠 تعديل وإ
 with tabs[0]:
     st.header("📊 عرض وفحص الماكينات")
     
+    # زر تحديث البيانات
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 تحديث البيانات", key="refresh_tab1", use_container_width=True):
+            clear_cache_and_reload()
+    
     if not os.path.exists(LOCAL_FILE):
         st.error("❌ الملف غير موجود. اضغط 'تحميل من GitHub' في الشريط الجانبي.")
     else:
@@ -645,6 +693,13 @@ with tabs[0]:
 # -------------------------------
 with tabs[1]:
     st.header("🛠 تعديل وإدارة البيانات")
+    
+    # زر تحديث البيانات
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 تحديث البيانات", key="refresh_tab2", use_container_width=True):
+            clear_cache_and_reload()
+    
     username = st.session_state.get("username")
     token_exists = bool(st.secrets.get("github", {}).get("token", None))
     can_push = (username == "admin") or (token_exists and GITHUB_AVAILABLE)
@@ -882,6 +937,12 @@ with tabs[2]:
 with tabs[3]:
     st.header("📈 التقارير والإحصائيات")
     
+    # زر تحديث البيانات
+    col1, col2 = st.columns([3, 1])
+    with col2:
+        if st.button("🔄 تحديث البيانات", key="refresh_tab4", use_container_width=True):
+            clear_cache_and_reload()
+    
     if not os.path.exists(LOCAL_FILE):
         st.warning("⚠ لا توجد بيانات لعرض التقارير")
     else:
@@ -1035,7 +1096,7 @@ with tabs[3]:
                                     machine_df.to_excel(writer, sheet_name="تحليل الماكينات", index=False)
                                 else:
                                     st.warning("⚠ لا توجد بيانات لتحليل الماكينات")
-                             
+                                    return
                                 
                             elif report_type == "خطط الصيانة" and "ServicePlan" in sheets_data:
                                 service_df.to_excel(writer, sheet_name="خطط الصيانة", index=False)
@@ -1087,9 +1148,7 @@ with st.sidebar.expander("ℹ المساعدة والدعم"):
     - يمكن العمل من أي مكان
     
     *📞 الدعم الفني:*
-    -   في حاله وجود مشاكل او محتاج دعم فني مقترح يرجي تواصل عبر واتساب (01274424062)
-    
-    
+    - في حالة وجود مشاكل او محتاج دعم فني مقترح يرجي تواصل عبر واتساب (01274424062)
     """)
 
 st.markdown("---")
