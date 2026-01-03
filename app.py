@@ -2,10 +2,9 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
 from collections import Counter
 import matplotlib.pyplot as plt
+import io
 
 # تهيئة صفحة Streamlit
 st.set_page_config(page_title="تحليل سجل الأحداث", layout="wide")
@@ -49,8 +48,8 @@ if uploaded_file is not None:
     df = pd.DataFrame(data, columns=["Date", "Time", "Event", "Details"])
     
     # عرض البيانات الأصلية
-    st.subheader("📄 البيانات الأصلية")
-    st.dataframe(df.head(100), use_container_width=True)
+    with st.expander("📄 عرض البيانات الأصلية (أول 100 سطر)"):
+        st.dataframe(df.head(100), use_container_width=True)
     
     # تحويل التاريخ والوقت إلى كائن datetime
     df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d.%m.%Y %H:%M:%S', errors='coerce')
@@ -72,39 +71,19 @@ if uploaded_file is not None:
     
     # حساب تكرارات الأحداث
     event_counts = df['Event'].value_counts().reset_index()
-    event_counts.columns = ['Event', 'Count']
+    event_counts.columns = ['الحدث', 'عدد التكرارات']
     
     # عرض أهم 20 حدثًا
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**أكثر 20 حدث تكرارًا:**")
-        st.dataframe(event_counts.head(20), use_container_width=True)
-    
-    with col2:
-        # رسم بياني لتكرارات الأحداث
-        fig1 = px.bar(event_counts.head(20), 
-                     x='Count', 
-                     y='Event',
-                     orientation='h',
-                     title='أكثر 20 حدث تكرارًا',
-                     color='Count',
-                     color_continuous_scale='viridis')
-        fig1.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig1, use_container_width=True)
+    st.markdown("**أكثر 20 حدث تكرارًا:**")
+    st.dataframe(event_counts.head(20), use_container_width=True)
     
     # تحليل الأحداث حسب التصنيف
     failure_events = df[df['IsFailure']]['Event'].value_counts()
     if not failure_events.empty:
         st.markdown("**توزيع أحداث الإخفاق (بالرمز):**")
         failure_df = failure_events.reset_index()
-        failure_df.columns = ['Event Code', 'Count']
-        
-        fig2 = px.pie(failure_df.head(10), 
-                     values='Count', 
-                     names='Event Code',
-                     title='توزيع رموز الأخطاء (أعلى 10)')
-        st.plotly_chart(fig2, use_container_width=True)
+        failure_df.columns = ['رمز الحدث', 'عدد التكرارات']
+        st.dataframe(failure_df.head(20), use_container_width=True)
     
     # ==================== قسم 2: حساب MTBF (Mean Time Between Failures) ====================
     st.subheader("⏱️ 2. حساب MTBF (متوسط الوقت بين الأعطال)")
@@ -136,27 +115,28 @@ if uploaded_file is not None:
         if time_between_failures:
             mttf = np.mean(time_between_failures)
             mttf_std = np.std(time_between_failures)
+            mttf_min = np.min(time_between_failures)
+            mttf_max = np.max(time_between_failures)
             
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("MTBF (متوسط الوقت بين الأعطال)", f"{mttf:.2f} دقيقة")
+                st.metric("MTBF (متوسط)", f"{mttf:.2f} دقيقة")
             with col2:
                 st.metric("الانحراف المعياري", f"{mttf_std:.2f} دقيقة")
             with col3:
-                st.metric("عدد فترات التشغيل", len(time_between_failures))
+                st.metric("أقصر فترة", f"{mttf_min:.2f} دقيقة")
+            with col4:
+                st.metric("أطول فترة", f"{mttf_max:.2f} دقيقة")
             
-            # رسم توزيع الأوقات بين الأعطال
-            fig3 = go.Figure()
-            fig3.add_trace(go.Histogram(x=time_between_failures, 
-                                       nbinsx=20,
-                                       name='فترات التشغيل',
-                                       marker_color='green'))
-            fig3.add_vline(x=mttf, line_dash="dash", line_color="red", 
-                          annotation_text=f"MTBF: {mttf:.1f} دقيقة")
-            fig3.update_layout(title='توزيع الأوقات بين الأعطال',
-                              xaxis_title='الوقت (دقيقة)',
-                              yaxis_title='التكرار')
-            st.plotly_chart(fig3, use_container_width=True)
+            st.markdown(f"**عدد فترات التشغيل:** {len(time_between_failures)}")
+            
+            # عرض جدول بالأوقات بين الأعطال
+            with st.expander("عرض تفاصيل الأوقات بين الأعطال"):
+                tb_df = pd.DataFrame({
+                    'رقم الفترة': range(1, len(time_between_failures) + 1),
+                    'الوقت بين الأعطال (دقيقة)': time_between_failures
+                })
+                st.dataframe(tb_df, use_container_width=True)
     
     # ==================== قسم 3: حساب MTTR (Mean Time To Repair) ====================
     st.subheader("🔧 3. حساب MTTR (متوسط وقت الإصلاح)")
@@ -175,128 +155,81 @@ if uploaded_file is not None:
                     repair_duration = (repair_time - failure_time).total_seconds() / 60  # بالدقائق
                     if 0 < repair_duration < 1440:  # تجاهل الفترات الأطول من يوم (ربما بيانات غير صحيحة)
                         repair_times.append({
-                            'Failure': df.iloc[i]['Event'],
-                            'FailureTime': failure_time,
-                            'RepairTime': repair_time,
-                            'Duration': repair_duration
+                            'العطل': df.iloc[i]['Event'],
+                            'وقت العطل': failure_time,
+                            'وقت الإصلاح': repair_time,
+                            'مدة الإصلاح (دقيقة)': repair_duration
                         })
                     break
     
     if repair_times:
         repair_df = pd.DataFrame(repair_times)
-        mttr = repair_df['Duration'].mean()
-        mttr_std = repair_df['Duration'].std()
+        mttr = repair_df['مدة الإصلاح (دقيقة)'].mean()
+        mttr_std = repair_df['مدة الإصلاح (دقيقة)'].std()
+        mttr_min = repair_df['مدة الإصلاح (دقيقة)'].min()
+        mttr_max = repair_df['مدة الإصلاح (دقيقة)'].max()
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("MTTR (متوسط وقت الإصلاح)", f"{mttr:.2f} دقيقة")
+            st.metric("MTTR (متوسط)", f"{mttr:.2f} دقيقة")
         with col2:
             st.metric("الانحراف المعياري", f"{mttr_std:.2f} دقيقة")
         with col3:
-            st.metric("عدد حالات الإصلاح", len(repair_times))
+            st.metric("أقصر إصلاح", f"{mttr_min:.2f} دقيقة")
+        with col4:
+            st.metric("أطول إصلاح", f"{mttr_max:.2f} دقيقة")
+        
+        st.markdown(f"**عدد حالات الإصلاح:** {len(repair_times)}")
         
         # عرض فترات الإصلاح
-        st.markdown("**تفاصيل فترات الإصلاح:**")
-        st.dataframe(repair_df, use_container_width=True)
-        
-        # رسم توزيع أوقات الإصلاح
-        fig4 = go.Figure()
-        fig4.add_trace(go.Histogram(x=repair_df['Duration'], 
-                                   nbinsx=20,
-                                   name='أوقات الإصلاح',
-                                   marker_color='red'))
-        fig4.add_vline(x=mttr, line_dash="dash", line_color="blue", 
-                      annotation_text=f"MTTR: {mttr:.1f} دقيقة")
-        fig4.update_layout(title='توزيع أوقات الإصلاح',
-                          xaxis_title='الوقت (دقيقة)',
-                          yaxis_title='التكرار')
-        st.plotly_chart(fig4, use_container_width=True)
+        with st.expander("عرض تفاصيل فترات الإصلاح"):
+            st.dataframe(repair_df, use_container_width=True)
         
         # تحليل أوقات الإصلاح حسب نوع العطل
-        repair_by_failure = repair_df.groupby('Failure')['Duration'].agg(['mean', 'count', 'std']).reset_index()
+        repair_by_failure = repair_df.groupby('العطل')['مدة الإصلاح (دقيقة)'].agg(['mean', 'count', 'std', 'min', 'max']).reset_index()
         repair_by_failure = repair_by_failure.sort_values('count', ascending=False)
         
         st.markdown("**متوسط وقت الإصلاح حسب نوع العطل:**")
-        fig5 = px.bar(repair_by_failure.head(10), 
-                     x='mean', 
-                     y='Failure',
-                     orientation='h',
-                     title='متوسط وقت الإصلاح حسب نوع العطل (أعلى 10)',
-                     color='count',
-                     color_continuous_scale='blues')
-        fig5.update_layout(yaxis={'categoryorder':'total ascending'})
-        st.plotly_chart(fig5, use_container_width=True)
+        st.dataframe(repair_by_failure.head(15), use_container_width=True)
     
     # ==================== قسم 4: التحليل الزمني بين الأحداث ====================
     st.subheader("📅 4. التحليل الزمني بين الأحداث")
     
     # حساب الفترات الزمنية بين جميع الأحداث المتتالية
-    df['TimeDiff'] = df['DateTime'].diff().dt.total_seconds() / 60  # الفرق بالدقائق
+    df['الفرق الزمني (دقيقة)'] = df['DateTime'].diff().dt.total_seconds() / 60  # الفرق بالدقائق
     
     # عرض الفترات الزمنية بين الأحداث
-    st.markdown("**الفترات الزمنية بين الأحداث المتتالية:**")
-    time_diff_df = df[['DateTime', 'Event', 'Details', 'TimeDiff']].copy()
-    st.dataframe(time_diff_df.head(50), use_container_width=True)
+    with st.expander("عرض الفترات الزمنية بين الأحداث المتتالية (أول 50 حدث)"):
+        time_diff_df = df[['DateTime', 'Event', 'Details', 'الفرق الزمني (دقيقة)']].copy()
+        st.dataframe(time_diff_df.head(50), use_container_width=True)
     
     # إحصائيات الفترات الزمنية
     st.markdown("**إحصائيات الفترات الزمنية بين الأحداث:**")
-    time_stats = time_diff_df['TimeDiff'].describe()
-    st.write(time_stats)
-    
-    # رسم الفترات الزمنية على خط الزمن
-    fig6 = go.Figure()
-    fig6.add_trace(go.Scatter(x=df['DateTime'], 
-                             y=df['TimeDiff'].fillna(0),
-                             mode='markers+lines',
-                             name='الفترة بين الأحداث',
-                             marker=dict(size=6, color=df['TimeDiff'].fillna(0), 
-                                        colorscale='viridis', showscale=True,
-                                        colorbar=dict(title="دقائق")),
-                             text=df['Event']))
-    fig6.update_layout(title='الفترات الزمنية بين الأحداث على خط الزمن',
-                      xaxis_title='الوقت',
-                      yaxis_title='الفترة بين الأحداث (دقيقة)')
-    st.plotly_chart(fig6, use_container_width=True)
+    time_stats = df['الفرق الزمني (دقيقة)'].describe()
+    st.dataframe(time_stats.to_frame().T, use_container_width=True)
     
     # ==================== قسم 5: التحليل المتقدم ====================
     st.subheader("📊 5. تحليل متقدم")
     
     # تحليل حسب نوبات العمل
-    df['Hour'] = df['DateTime'].dt.hour
-    df['Shift'] = pd.cut(df['Hour'], 
-                        bins=[0, 8, 16, 24], 
-                        labels=['الوردية الثالثة', 'الوردية الأولى', 'الوردية الثانية'])
+    df['الساعة'] = df['DateTime'].dt.hour
+    df['الوردية'] = pd.cut(df['الساعة'], 
+                          bins=[0, 8, 16, 24], 
+                          labels=['الوردية الثالثة', 'الوردية الأولى', 'الوردية الثانية'])
     
     # حساب تكرار الأحداث حسب الوردية
-    events_by_shift = df[df['IsFailure']].groupby('Shift')['Event'].count().reset_index()
+    events_by_shift = df[df['IsFailure']].groupby('الوردية')['Event'].count().reset_index()
     events_by_shift.columns = ['الوردية', 'عدد الأحداث']
     
-    col1, col2 = st.columns(2)
+    st.markdown("**توزيع الأحداث حسب الوردية:**")
+    st.dataframe(events_by_shift, use_container_width=True)
     
-    with col1:
-        st.markdown("**توزيع الأحداث حسب الوردية:**")
-        st.dataframe(events_by_shift, use_container_width=True)
-        
-        fig7 = px.pie(events_by_shift, 
-                     values='عدد الأحداث', 
-                     names='الوردية',
-                     title='توزيع الأحداث حسب الوردية',
-                     color_discrete_sequence=px.colors.sequential.RdBu)
-        st.plotly_chart(fig7, use_container_width=True)
+    # تحليل حسب اليوم والساعة
+    hourly_events = df[df['IsFailure']].groupby('الساعة').size().reset_index()
+    hourly_events.columns = ['الساعة', 'عدد الأحداث']
     
-    with col2:
-        # تحليل حسب اليوم والساعة
-        df['Hour'] = df['DateTime'].dt.hour
-        hourly_events = df[df['IsFailure']].groupby('Hour').size().reset_index()
-        hourly_events.columns = ['الساعة', 'عدد الأحداث']
-        
-        fig8 = px.line(hourly_events, 
-                      x='الساعة', 
-                      y='عدد الأحداث',
-                      title='توزيع الأحداث على مدار الساعة',
-                      markers=True)
-        fig8.update_xaxes(range=[0, 23])
-        st.plotly_chart(fig8, use_container_width=True)
+    st.markdown("**توزيع الأحداث حسب الساعة:**")
+    st.dataframe(hourly_events.sort_values('الساعة'), use_container_width=True)
     
     # ==================== قسم 6: الملخص التنفيذي ====================
     st.subheader("📋 6. الملخص التنفيذي")
@@ -320,58 +253,101 @@ if uploaded_file is not None:
     
     # حساب التوفر (Availability)
     if 'repair_times' in locals() and repair_times and 'time_between_failures' in locals() and time_between_failures:
-        total_operation_time = sum(time_between_failures) + sum(repair_df['Duration'])
-        if total_operation_time > 0:
-            availability = (sum(time_between_failures) / total_operation_time) * 100
-            st.metric("التوفر (%)", f"{availability:.2f}%")
+        total_uptime = sum(time_between_failures)
+        total_downtime = sum(repair_df['مدة الإصلاح (دقيقة)']) if 'repair_df' in locals() else 0
+        if total_uptime + total_downtime > 0:
+            availability = (total_uptime / (total_uptime + total_downtime)) * 100
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("التوفر التشغيلي", f"{availability:.2f}%")
+            with col2:
+                st.metric("إجمالي وقت التشغيل", f"{total_uptime:.2f} دقيقة")
+            with col3:
+                st.metric("إجمالي وقت التوقف", f"{total_downtime:.2f} دقيقة")
     
     # الأحداث الأكثر تكرارًا مع نسبتها
     top_events = event_counts.head(10).copy()
-    top_events['النسبة %'] = (top_events['Count'] / total_events * 100).round(2)
+    top_events['النسبة %'] = (top_events['عدد التكرارات'] / total_events * 100).round(2)
     
     st.markdown("**الأحداث العشرة الأكثر تكرارًا:**")
     st.dataframe(top_events, use_container_width=True)
     
+    # ==================== قسم 7: تحميل النتائج ====================
+    st.subheader("💾 7. تحميل النتائج")
+    
     # زر لحفظ النتائج
-    if st.button("💾 حفظ النتائج في ملف Excel"):
-        # إنشاء كاتب Excel
-        with pd.ExcelWriter('logbook_analysis_results.xlsx') as writer:
-            df.to_excel(writer, sheet_name='البيانات الأصلية', index=False)
+    if st.button("حفظ النتائج في ملف Excel"):
+        # إنشاء ملف Excel في الذاكرة
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            # حفظ البيانات الأصلية
+            df.to_excel(writer, sheet_name='البيانات_الأصلية', index=False)
             
+            # حفظ تكرارات الأحداث
+            event_counts.to_excel(writer, sheet_name='تكرارات_الأحداث', index=False)
+            
+            # حفظ فترات الإصلاح إذا وجدت
             if 'repair_df' in locals():
-                repair_df.to_excel(writer, sheet_name='أوقات الإصلاح', index=False)
+                repair_df.to_excel(writer, sheet_name='أوقات_الإصلاح', index=False)
             
-            event_counts.to_excel(writer, sheet_name='تكرارات الأحداث', index=False)
+            # حفظ تحليل MTBF إذا وجد
+            if 'time_between_failures' in locals() and time_between_failures:
+                mtbf_df = pd.DataFrame({
+                    'رقم_الفترة': range(1, len(time_between_failures) + 1),
+                    'الوقت_بين_الأعطال_دقيقة': time_between_failures
+                })
+                mtbf_df.to_excel(writer, sheet_name='MTBF_تحليل', index=False)
             
-            # إنشاء ملخص
+            # إنشاء ملخص تنفيذي
             summary_data = {
-                'المؤشر': ['إجمالي الأحداث', 'أحداث إخفاق', 'أحداث توقف', 'أنواع أحداث مختلفة'],
-                'القيمة': [total_events, failure_events_count, stoppage_events_count, unique_events]
+                'المؤشر': [
+                    'إجمالي الأحداث',
+                    'أحداث إخفاق',
+                    'أحداث توقف',
+                    'أنواع أحداث مختلفة',
+                    'إجمالي وقت التشغيل (دقيقة)',
+                    'إجمالي وقت التوقف (دقيقة)',
+                    'التوفر التشغيلي (%)'
+                ],
+                'القيمة': [
+                    total_events,
+                    failure_events_count,
+                    stoppage_events_count,
+                    unique_events,
+                    total_uptime if 'total_uptime' in locals() else 0,
+                    total_downtime if 'total_downtime' in locals() else 0,
+                    availability if 'availability' in locals() else 0
+                ]
             }
             
             if 'mttf' in locals():
-                summary_data['المؤشر'].append('MTBF (دقيقة)')
-                summary_data['القيمة'].append(round(mttf, 2))
+                summary_data['المؤشر'].extend(['MTBF (دقيقة)', 'انحراف معياري MTBF'])
+                summary_data['القيمة'].extend([round(mttf, 2), round(mttf_std, 2)])
             
             if 'mttr' in locals():
-                summary_data['المؤشر'].append('MTTR (دقيقة)')
-                summary_data['القيمة'].append(round(mttr, 2))
+                summary_data['المؤشر'].extend(['MTTR (دقيقة)', 'انحراف معياري MTTR'])
+                summary_data['القيمة'].extend([round(mttr, 2), round(mttr_std, 2)])
             
             summary_df = pd.DataFrame(summary_data)
-            summary_df.to_excel(writer, sheet_name='الملخص', index=False)
+            summary_df.to_excel(writer, sheet_name='الملخص_التنفيذي', index=False)
+            
+            # حفظ توزيع الأحداث حسب الوردية
+            events_by_shift.to_excel(writer, sheet_name='توزيع_الورديات', index=False)
+            
+            # حفظ توزيع الأحداث حسب الساعة
+            hourly_events.to_excel(writer, sheet_name='توزيع_الساعات', index=False)
         
-        st.success("تم حفظ النتائج في ملف 'logbook_analysis_results.xlsx'")
+        output.seek(0)
         
         # تقديم رابط للتنزيل
-        with open('logbook_analysis_results.xlsx', 'rb') as f:
-            excel_data = f.read()
-        
         st.download_button(
             label="📥 تنزيل ملف Excel",
-            data=excel_data,
-            file_name="logbook_analysis_results.xlsx",
+            data=output,
+            file_name="نتائج_تحليل_السجل.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+        
+        st.success("✅ تم إنشاء الملف بنجاح! اضغط على زر التنزيل أعلاه.")
 
 else:
     st.info("⬆️ يرجى رفع ملف السجل لبدء التحليل")
@@ -398,4 +374,5 @@ with st.expander("📖 تعليمات الاستخدام"):
     - يتم تحديد الأعطال تلقائيًا بناءً على رموز الأخطاء (E, W, T)
     - يتم حساب الأوقات بالدقائق
     - يمكن تحميل الملفات ذات الصيغة TXT فقط
+    - يتم عرض جميع النتائج في جداول تفاعلية
     """)
