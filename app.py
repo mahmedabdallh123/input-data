@@ -1,564 +1,563 @@
-import pandas as pd
 import streamlit as st
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 from datetime import datetime, timedelta
+import numpy as np
 import io
+import base64
+from pathlib import Path
 
-# إعداد واجهة Streamlit الأساسية
-st.set_page_config(page_title="نظام تحليل سجلات الماكينة", layout="wide")
-st.title("🏭 نظام تحليل سجلات الماكينة")
-st.markdown("### تحليل سجلات الماكينة وإحصائيات الأعطال")
+# إعداد صفحة Streamlit
+st.set_page_config(
+    page_title="تحليل سجلات الماكينات",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# -------------------------------------------------------------
-# دالة لتحميل البيانات
-# -------------------------------------------------------------
-def load_data(uploaded_file):
-    """تحميل ومعالجة ملف السجل"""
-    lines = uploaded_file.read().decode('utf-8').splitlines()
+# تخصيص التصميم مع دعم اللغة العربية
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap');
     
+    * {
+        font-family: 'Cairo', sans-serif;
+    }
+    
+    .main-header {
+        text-align: center;
+        color: #2E86AB;
+        margin-bottom: 2rem;
+        font-size: 2.5rem;
+        font-weight: 700;
+    }
+    
+    .sub-header {
+        color: #264653;
+        border-right: 5px solid #2A9D8F;
+        padding-right: 15px;
+        margin-top: 2rem;
+        margin-bottom: 1rem;
+    }
+    
+    .card {
+        background-color: #f8f9fa;
+        border-radius: 10px;
+        padding: 20px;
+        margin: 10px 0;
+        border-right: 4px solid #E76F51;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    
+    .metric-card {
+        background: linear-gradient(135deg, #2A9D8F 0%, #264653 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 10px;
+    }
+    
+    .stButton > button {
+        width: 100%;
+        background-color: #2A9D8F;
+        color: white;
+        font-weight: bold;
+        border: none;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    
+    .stButton > button:hover {
+        background-color: #238276;
+    }
+    
+    .upload-section {
+        border: 2px dashed #2A9D8F;
+        border-radius: 10px;
+        padding: 30px;
+        text-align: center;
+        margin: 20px 0;
+        background-color: rgba(42, 157, 143, 0.05);
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# عنوان التطبيق
+st.markdown('<h1 class="main-header">📊 نظام تحليل سجلات الماكينات</h1>', unsafe_allow_html=True)
+
+def parse_log_file(file_content):
+    """
+    تحليل ملف السجل وتحويله إلى DataFrame
+    """
+    lines = file_content.split('\n')
     data = []
+    
     for line in lines:
-        # تخطي الأسطر الفارغة أو التي تبدأ بـ "="
         if line.startswith("=") or line.strip() == "":
             continue
         
-        # تقسيم البيانات بعلامات التبويب
         parts = line.split("\t")
-        
-        # التأكد من أن لدينا 4 أعمدة على الأقل
         while len(parts) < 4:
             parts.append("")
         
-        data.append([part.strip() for part in parts])
+        if len(parts) >= 4:
+            # تنظيف البيانات
+            date = parts[0].strip()
+            time = parts[1].strip()
+            event = parts[2].strip()
+            details = parts[3].strip()
+            
+            # التحقق من صحة التاريخ والوقت
+            try:
+                if date and time:
+                    datetime_str = f"{date} {time}"
+                    datetime_obj = pd.to_datetime(datetime_str, format='%d.%m.%Y %H:%M:%S')
+                    data.append({
+                        'Date': date,
+                        'Time': time,
+                        'DateTime': datetime_obj,
+                        'Event': event,
+                        'Details': details
+                    })
+            except:
+                continue
     
-    # إنشاء DataFrame
-    df = pd.DataFrame(data, columns=["Date", "Time", "Event", "Details"])
-    
-    # تنظيف البيانات
-    df = df[(df['Date'].str.strip() != '') & (df['Time'].str.strip() != '')]
-    
-    # دمج التاريخ والوقت
-    df['DateTime'] = pd.to_datetime(df['Date'] + ' ' + df['Time'], format='%d.%m.%Y %H:%M:%S')
-    
+    df = pd.DataFrame(data)
     return df
 
-# -------------------------------------------------------------
-# دالة لحساب الوقت بين حدثين
-# -------------------------------------------------------------
-def calculate_time_between(df, start_event_list, end_event, start_date, end_date):
-    """حساب الوقت بين قائمة من الأحداث وحدث معين"""
+def calculate_time_analysis(df):
+    """
+    تحليل الوقت بين الأحداث
+    """
+    analysis_results = {}
     
-    # تصفية البيانات حسب الفترة
-    filtered_df = df[(df['DateTime'] >= start_date) & (df['DateTime'] <= end_date)]
+    # حساب الفترات بين الأحداث المتشابهة
+    df_sorted = df.sort_values('DateTime')
+    df_sorted['TimeDiff'] = df_sorted['DateTime'].diff()
+    df_sorted['PrevEvent'] = df_sorted['Event'].shift(1)
     
-    if filtered_df.empty:
-        return pd.DataFrame(), timedelta()
+    # الفترات للأحداث المتشابهة المتتالية
+    same_events = df_sorted[df_sorted['Event'] == df_sorted['PrevEvent']]
     
-    # ترتيب البيانات حسب الوقت
-    sorted_df = filtered_df.sort_values('DateTime')
+    if not same_events.empty:
+        same_events_summary = same_events.groupby('Event').agg({
+            'TimeDiff': ['count', 'mean', 'min', 'max']
+        }).round(2)
+        analysis_results['same_events'] = same_events_summary
     
-    results = []
-    total_time = timedelta()
-    
-    # معالجة كل حدث في القائمة
-    for start_event in start_event_list:
-        # الحصول على جميع تكرارات الحدث الأول
-        start_events = sorted_df[sorted_df['Event'] == start_event]
+    # الفترات بين أزواج الأحداث المختلفة
+    event_sequences = []
+    for i in range(len(df_sorted) - 1):
+        start_event = df_sorted.iloc[i]['Event']
+        end_event = df_sorted.iloc[i + 1]['Event']
+        time_diff = df_sorted.iloc[i + 1]['DateTime'] - df_sorted.iloc[i]['DateTime']
         
-        for idx, row in start_events.iterrows():
-            start_time = row['DateTime']
-            
-            # البحث عن الحدث الثاني بعد الحدث الأول
-            end_events = sorted_df[
-                (sorted_df['Event'] == end_event) & 
-                (sorted_df['DateTime'] > start_time)
-            ]
-            
-            if not end_events.empty:
-                end_time = end_events.iloc[0]['DateTime']
-                time_difference = end_time - start_time
-                
-                # تخزين النتائج
-                results.append({
-                    'الحدث الأول': start_event,
-                    'وقت الحدث الأول': start_time,
-                    'الحدث الثاني': end_event,
-                    'وقت الحدث الثاني': end_time,
-                    'المدة': time_difference,
-                    'المدة (دقيقة)': time_difference.total_seconds() / 60
-                })
-                
-                total_time += time_difference
-    
-    # تحويل النتائج إلى DataFrame
-    if results:
-        results_df = pd.DataFrame(results)
-        return results_df, total_time
-    else:
-        return pd.DataFrame(), timedelta()
-
-# -------------------------------------------------------------
-# دالة لحساب MTBF
-# -------------------------------------------------------------
-def calculate_mtbf(df, event, start_date, end_date):
-    """حساب متوسط الوقت بين أعطال من نفس النوع"""
-    
-    # تصفية البيانات للحدث المحدد
-    filtered_df = df[
-        (df['Event'] == event) & 
-        (df['DateTime'] >= start_date) & 
-        (df['DateTime'] <= end_date)
-    ].sort_values('DateTime')
-    
-    if len(filtered_df) < 2:
-        return pd.DataFrame(), pd.DataFrame()
-    
-    results = []
-    total_time_between = timedelta()
-    
-    # حساب الوقت بين كل حدثين متتاليين
-    for i in range(1, len(filtered_df)):
-        event1_time = filtered_df.iloc[i-1]['DateTime']
-        event2_time = filtered_df.iloc[i]['DateTime']
-        time_between = event2_time - event1_time
-        
-        results.append({
-            'الحدث': event,
-            'التكرار الأول': i,
-            'وقت التكرار الأول': event1_time,
-            'وقت التكرار الثاني': event2_time,
-            'الوقت بين التكرارين': time_between,
-            'المدة (ساعة)': time_between.total_seconds() / 3600
+        event_sequences.append({
+            'From': start_event,
+            'To': end_event,
+            'Duration': time_diff,
+            'Duration_Minutes': time_diff.total_seconds() / 60
         })
-        
-        total_time_between += time_between
     
-    # إنشاء DataFrame للنتائج
-    results_df = pd.DataFrame(results)
+    analysis_results['sequences'] = pd.DataFrame(event_sequences)
     
-    # حساب إحصائيات MTBF
-    if not results_df.empty:
-        avg_mtbf = results_df['المدة (ساعة)'].mean()
-        min_mtbf = results_df['المدة (ساعة)'].min()
-        max_mtbf = results_df['المدة (ساعة)'].max()
-        total_intervals = len(results_df)
-        
-        stats_df = pd.DataFrame({
-            'المؤشر': ['متوسط MTBF', 'أقصر فترة', 'أطول فترة', 'عدد الفترات'],
-            'القيمة': [
-                f"{avg_mtbf:.2f} ساعة",
-                f"{min_mtbf:.2f} ساعة",
-                f"{max_mtbf:.2f} ساعة",
-                f"{total_intervals}"
-            ]
-        })
-    else:
-        stats_df = pd.DataFrame()
-    
-    return results_df, stats_df
+    return analysis_results
 
-# -------------------------------------------------------------
-# دالة لحساب الإحصائيات العامة
-# -------------------------------------------------------------
-def calculate_general_stats(df, start_date, end_date):
-    """حساب الإحصائيات العامة"""
+def create_dashboard(df):
+    """
+    إنشاء لوحة تحكم تفاعلية
+    """
+    # قسم المقاييس الرئيسية
+    col1, col2, col3, col4 = st.columns(4)
     
-    filtered_df = df[(df['DateTime'] >= start_date) & (df['DateTime'] <= end_date)]
-    
-    stats = {
-        'إجمالي الأحداث': len(filtered_df),
-        'عدد أنواع الأحداث': filtered_df['Event'].nunique(),
-        'الفترة الزمنية': f"{start_date.date()} إلى {end_date.date()}",
-        'المدة الإجمالية': str(end_date - start_date).split('.')[0],
-        'أول حدث': filtered_df['DateTime'].min() if not filtered_df.empty else 'N/A',
-        'آخر حدث': filtered_df['DateTime'].max() if not filtered_df.empty else 'N/A'
-    }
-    
-    return pd.DataFrame(stats.items(), columns=['المؤشر', 'القيمة'])
-
-# -------------------------------------------------------------
-# الواجهة الرئيسية
-# -------------------------------------------------------------
-
-# قائمة منسدلة لاختيار نوع التحليل
-analysis_options = [
-    "اختر نوع التحليل...",
-    "معاينة البيانات",
-    "احصائيات عامة",
-    "أنواع الأحداث",
-    "تكرارات الأحداث",
-    "MTBF - متوسط الوقت بين أعطال",
-    "MTTR - متوسط وقت الإصلاح",
-    "حساب الوقت بين الأحداث"
-]
-
-selected_option = st.selectbox("اختر نوع التحليل:", analysis_options)
-
-# قسم رفع الملف
-uploaded_file = st.file_uploader("رفع ملف السجل", type=["txt"])
-
-if uploaded_file is not None:
-    # تحميل البيانات
-    df = load_data(uploaded_file)
-    
-    # قسم اختيار الفترة الزمنية
-    st.subheader("تحديد الفترة الزمنية")
-    
-    col1, col2 = st.columns(2)
     with col1:
-        start_date_input = st.date_input("من تاريخ", df['DateTime'].min().date())
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric("إجمالي الأحداث", len(df))
+        st.markdown('</div>', unsafe_allow_html=True)
+    
     with col2:
-        end_date_input = st.date_input("إلى تاريخ", df['DateTime'].max().date())
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.metric("أنواع الأحداث", df['Event'].nunique())
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # تحويل التواريخ
-    start_datetime = datetime.combine(start_date_input, datetime.min.time())
-    end_datetime = datetime.combine(end_date_input, datetime.max.time())
+    with col3:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        duration = (df['DateTime'].max() - df['DateTime'].min()).days
+        st.metric("المدة الزمنية (أيام)", duration)
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # تصفية البيانات حسب الفترة
-    filtered_df = df[
-        (df['DateTime'] >= start_datetime) & 
-        (df['DateTime'] <= end_datetime)
-    ]
+    with col4:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        avg_events = len(df) / max(duration, 1)
+        st.metric("متوسط الأحداث/يوم", f"{avg_events:.1f}")
+        st.markdown('</div>', unsafe_allow_html=True)
     
-    # ------------------------------------------------------------------
-    # 1. معاينة البيانات
-    # ------------------------------------------------------------------
-    if selected_option == "معاينة البيانات":
-        st.subheader("📄 معاينة البيانات")
+    # تخطيط المحتوى
+    tab1, tab2, tab3, tab4 = st.tabs(["📈 نظرة عامة", "🔄 تحليل الأحداث", "⏱️ تحليل الوقت", "📋 التقارير"])
+    
+    with tab1:
+        st.markdown('<h3 class="sub-header">نظرة عامة على البيانات</h3>', unsafe_allow_html=True)
         
-        # خيارات العرض
         col1, col2 = st.columns(2)
+        
         with col1:
-            show_rows = st.number_input("عدد الصفوف المعروضة", 10, 500, 100)
+            # توزيع الأحداث حسب النوع
+            event_counts = df['Event'].value_counts().head(10)
+            fig1 = px.bar(
+                event_counts, 
+                x=event_counts.values,
+                y=event_counts.index,
+                orientation='h',
+                title="أكثر 10 أحداث تكراراً",
+                labels={'x': 'عدد التكرارات', 'y': 'الحدث'},
+                color=event_counts.values,
+                color_continuous_scale='Viridis'
+            )
+            fig1.update_layout(height=400)
+            st.plotly_chart(fig1, use_container_width=True)
+        
         with col2:
-            sort_order = st.radio("ترتيب البيانات", ["الأحدث أولاً", "الأقدم أولاً"])
-        
-        # تحضير البيانات للعرض
-        display_df = filtered_df.copy()
-        
-        if sort_order == "الأحدث أولاً":
-            display_df = display_df.sort_values('DateTime', ascending=False)
-        else:
-            display_df = display_df.sort_values('DateTime', ascending=True)
-        
-        # عرض البيانات
-        st.dataframe(display_df.head(show_rows))
-        
-        # معلومات إضافية
-        st.info(f"إجمالي الصفوف في الفترة المحددة: {len(filtered_df)}")
+            # جدول البيانات
+            st.markdown('<h4>عينة من البيانات</h4>', unsafe_allow_html=True)
+            st.dataframe(
+                df[['Date', 'Time', 'Event', 'Details']].head(20),
+                height=400,
+                use_container_width=True
+            )
     
-    # ------------------------------------------------------------------
-    # 2. احصائيات عامة
-    # ------------------------------------------------------------------
-    elif selected_option == "احصائيات عامة":
-        st.subheader("📊 الإحصائيات العامة")
+    with tab2:
+        st.markdown('<h3 class="sub-header">تحليل تفصيلي للأحداث</h3>', unsafe_allow_html=True)
         
-        stats_df = calculate_general_stats(df, start_datetime, end_datetime)
-        st.table(stats_df)
+        # فلتر الأحداث
+        selected_events = st.multiselect(
+            "اختر الأحداث للتحليل:",
+            options=df['Event'].unique(),
+            default=df['Event'].value_counts().head(5).index.tolist()
+        )
         
-        # إحصائيات إضافية
-        st.subheader("معلومات إضافية")
+        if selected_events:
+            filtered_df = df[df['Event'].isin(selected_events)]
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # مخطط توزيع الأحداث المحددة
+                fig2 = px.pie(
+                    filtered_df,
+                    names='Event',
+                    title='توزيع الأحداث المحددة',
+                    hole=0.4
+                )
+                fig2.update_layout(height=400)
+                st.plotly_chart(fig2, use_container_width=True)
+            
+            with col2:
+                # جدول تفصيلي
+                event_summary = filtered_df.groupby('Event').agg({
+                    'DateTime': ['count', 'min', 'max']
+                }).round(2)
+                event_summary.columns = ['العدد', 'أول ظهور', 'آخر ظهور']
+                st.dataframe(event_summary, use_container_width=True)
+    
+    with tab3:
+        st.markdown('<h3 class="sub-header">تحليل الفترات الزمنية</h3>', unsafe_allow_html=True)
+        
+        # حساب التحليلات الزمنية
+        analysis = calculate_time_analysis(df)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown('<h4>الفترات بين الأحداث المتشابهة</h4>', unsafe_allow_html=True)
+            if 'same_events' in analysis:
+                st.dataframe(analysis['same_events'], use_container_width=True)
+        
+        with col2:
+            st.markdown('<h4>تحليل تسلسل الأحداث</h4>', unsafe_allow_html=True)
+            # اختيار تسلسل محدد
+            unique_events = df['Event'].unique()
+            from_event = st.selectbox("من الحدث:", unique_events)
+            to_event = st.selectbox("إلى الحدث:", unique_events)
+            
+            if from_event and to_event:
+                sequences = analysis['sequences']
+                specific_seq = sequences[
+                    (sequences['From'] == from_event) & 
+                    (sequences['To'] == to_event)
+                ]
+                
+                if not specific_seq.empty:
+                    st.write(f"**المدة المتوسطة:** {specific_seq['Duration_Minutes'].mean():.2f} دقيقة")
+                    st.write(f"**عدد المرات:** {len(specific_seq)}")
+                    
+                    # مخطط التوزيع
+                    fig3 = px.histogram(
+                        specific_seq,
+                        x='Duration_Minutes',
+                        title=f'توزيع المدة بين {from_event} و {to_event}',
+                        nbins=20
+                    )
+                    fig3.update_layout(height=300)
+                    st.plotly_chart(fig3, use_container_width=True)
+    
+    with tab4:
+        st.markdown('<h3 class="sub-header">التقارير والتصدير</h3>', unsafe_allow_html=True)
         
         col1, col2, col3 = st.columns(3)
+        
         with col1:
-            st.metric("إجمالي الأحداث", len(filtered_df))
+            if st.button("📥 تصدير البيانات الكاملة", use_container_width=True):
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="تحميل CSV",
+                    data=csv,
+                    file_name="machine_logs_complete.csv",
+                    mime="text/csv"
+                )
+        
         with col2:
-            st.metric("أنواع الأحداث", filtered_df['Event'].nunique())
+            if st.button("📊 تصدير الإحصائيات", use_container_width=True):
+                stats = df.groupby('Event').agg({
+                    'DateTime': ['count', 'min', 'max']
+                })
+                stats_csv = stats.to_csv()
+                st.download_button(
+                    label="تحميل الإحصائيات",
+                    data=stats_csv,
+                    file_name="machine_logs_stats.csv",
+                    mime="text/csv"
+                )
+        
         with col3:
-            days_diff = (end_datetime - start_datetime).days
-            st.metric("المدة بالأيام", days_diff)
-    
-    # ------------------------------------------------------------------
-    # 3. أنواع الأحداث
-    # ------------------------------------------------------------------
-    elif selected_option == "أنواع الأحداث":
-        st.subheader("🔍 أنواع الأحداث المختلفة")
-        
-        # الحصول على جميع أنواع الأحداث
-        unique_events = filtered_df['Event'].unique().tolist()
-        
-        # عرض عدد الأحداث لكل نوع
-        event_counts = filtered_df['Event'].value_counts().reset_index()
-        event_counts.columns = ['نوع الحدث', 'العدد']
-        
-        st.write(f"**إجمالي أنواع الأحداث: {len(unique_events)}**")
-        st.table(event_counts)
-        
-        # خيار لعرض تفاصيل حدث معين
-        selected_event = st.selectbox("اختر حدث لعرض تفاصيله:", unique_events)
-        
-        if selected_event:
-            event_data = filtered_df[filtered_df['Event'] == selected_event]
-            
-            st.write(f"**تفاصيل الحدث: {selected_event}**")
-            st.write(f"عدد مرات الحدوث: {len(event_data)}")
-            st.write(f"أول مرة: {event_data['DateTime'].min()}")
-            st.write(f"آخر مرة: {event_data['DateTime'].max()}")
-            
-            # عرض 5 أحداث عشوائية
-            st.write("أمثلة على الأحداث:")
-            st.table(event_data.head(5)[['DateTime', 'Details']])
-    
-    # ------------------------------------------------------------------
-    # 4. تكرارات الأحداث
-    # ------------------------------------------------------------------
-    elif selected_option == "تكرارات الأحداث":
-        st.subheader("🔄 تكرارات الأحداث")
-        
-        # حساب التكرارات
-        frequency_df = filtered_df['Event'].value_counts().reset_index()
-        frequency_df.columns = ['الحدث', 'التكرار']
-        
-        # حساب النسبة المئوية
-        total_events = frequency_df['التكرار'].sum()
-        frequency_df['النسبة %'] = (frequency_df['التكرار'] / total_events * 100).round(2)
-        
-        st.table(frequency_df)
-        
-        # تحليل تكرار حدث معين
-        all_events = filtered_df['Event'].unique().tolist()
-        selected_for_analysis = st.selectbox("اختر حدث لتحليل تكراره:", all_events)
-        
-        if selected_for_analysis:
-            # الحصول على بيانات الحدث المحدد
-            event_data = filtered_df[filtered_df['Event'] == selected_for_analysis]
-            
-            # إضافة عمود اليوم
-            event_data['اليوم'] = event_data['DateTime'].dt.date
-            
-            # حساب التكرار اليومي
-            daily_freq = event_data.groupby('اليوم').size().reset_index()
-            daily_freq.columns = ['اليوم', 'التكرار']
-            
-            st.write(f"**التكرار اليومي للحدث: {selected_for_analysis}**")
-            st.table(daily_freq)
-            
-            # إحصائيات التكرار اليومي
-            if not daily_freq.empty:
-                st.write("**إحصائيات التكرار اليومي:**")
-                st.write(f"متوسط التكرار اليومي: {daily_freq['التكرار'].mean():.2f}")
-                st.write(f"أعلى تكرار يومي: {daily_freq['التكرار'].max()}")
-                st.write(f"أقل تكرار يومي: {daily_freq['التكرار'].min()}")
-    
-    # ------------------------------------------------------------------
-    # 5. MTBF - متوسط الوقت بين أعطال
-    # ------------------------------------------------------------------
-    elif selected_option == "MTBF - متوسط الوقت بين أعطال":
-        st.subheader("🔄 MTBF - متوسط الوقت بين أعطال")
-        
-        # اختيار نوع العطل
-        all_events = filtered_df['Event'].unique().tolist()
-        selected_failure = st.selectbox("اختر نوع العطل لحساب MTBF:", all_events)
-        
-        if selected_failure:
-            # حساب MTBF
-            mtbf_data, mtbf_stats = calculate_mtbf(df, selected_failure, start_datetime, end_datetime)
-            
-            if not mtbf_data.empty:
-                st.write(f"**MTBF للعطل: {selected_failure}**")
-                
-                # عرض البيانات التفصيلية
-                st.write("البيانات التفصيلية:")
-                st.table(mtbf_data)
-                
-                # عرض الإحصائيات
-                st.write("إحصائيات MTBF:")
-                st.table(mtbf_stats)
-                
-                # خيار لتحميل البيانات
-                csv = mtbf_data.to_csv(index=False, encoding='utf-8-sig')
+            if st.button("⏱️ تصدير تحليل الوقت", use_container_width=True):
+                analysis = calculate_time_analysis(df)
+                time_csv = analysis['sequences'].to_csv(index=False)
                 st.download_button(
-                    label="تحميل بيانات MTBF",
-                    data=csv,
-                    file_name=f"mtbf_{selected_failure}.csv",
+                    label="تحميل تحليل الوقت",
+                    data=time_csv,
+                    file_name="time_analysis.csv",
                     mime="text/csv"
                 )
-            else:
-                st.warning(f"العطل '{selected_failure}' لم يحدث مرتين على الأقل في الفترة المحددة")
-    
-    # ------------------------------------------------------------------
-    # 6. MTTR - متوسط وقت الإصلاح
-    # ------------------------------------------------------------------
-    elif selected_option == "MTTR - متوسط وقت الإصلاح":
-        st.subheader("🔧 MTTR - متوسط وقت الإصلاح")
         
-        # قسم اختيار الأحداث
-        st.write("**اختر الأحداث التي تمثل الأعطال:**")
-        all_events = filtered_df['Event'].unique().tolist()
+        # تقرير مخصص
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### 📋 تقرير مخصص")
         
-        # اختيار متعدد للأعطال
-        selected_failures = st.multiselect(
-            "اختر أحداث الأعطال:",
-            all_events,
-            default=['Sliver break', 'Machine stopped'] if 'Sliver break' in all_events else []
+        report_type = st.radio(
+            "نوع التقرير:",
+            ["ملخص الأحداث", "تحليل الزمن", "المشاكل الشائعة", "جميع البيانات"]
         )
         
-        # اختيار حدث الاستعادة
-        recovery_event = st.selectbox(
-            "اختر حدث الاستعادة/التشغيل:",
-            all_events,
-            index=all_events.index('Automatic mode') if 'Automatic mode' in all_events else 0
+        if st.button("إنشاء التقرير", use_container_width=True):
+            with st.spinner("جاري إنشاء التقرير..."):
+                if report_type == "ملخص الأحداث":
+                    summary = df['Event'].value_counts().reset_index()
+                    summary.columns = ['الحدث', 'التكرار']
+                    st.dataframe(summary, use_container_width=True)
+                
+                elif report_type == "تحليل الزمن":
+                    analysis = calculate_time_analysis(df)
+                    st.dataframe(analysis['sequences'].head(50), use_container_width=True)
+                
+                elif report_type == "المشاكل الشائعة":
+                    errors = df[df['Event'].str.contains('E0|W0', na=False)]
+                    st.dataframe(errors, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
+
+def main():
+    """
+    الوظيفة الرئيسية للتطبيق
+    """
+    # الشريط الجانبي
+    with st.sidebar:
+        st.markdown('<div style="text-align: center;">', unsafe_allow_html=True)
+        st.image("https://cdn-icons-png.flaticon.com/512/3067/3067256.png", width=100)
+        st.markdown("</div>", unsafe_allow_html=True)
+        
+        st.markdown("### ⚙️ إعدادات التطبيق")
+        
+        upload_option = st.radio(
+            "طريقة تحميل البيانات:",
+            ["رفع ملف", "إدخال النص", "رابط مباشر"]
         )
         
-        if selected_failures and recovery_event:
-            # حساب MTTR
-            mttr_data, total_downtime = calculate_time_between(
-                df, selected_failures, recovery_event, start_datetime, end_datetime
+        uploaded_file = None
+        file_content = None
+        
+        if upload_option == "رفع ملف":
+            st.markdown('<div class="upload-section">', unsafe_allow_html=True)
+            uploaded_file = st.file_uploader(
+                "اختر ملف السجل",
+                type=['txt', 'log', 'csv'],
+                help="يمكنك رفع ملفات TXT أو LOG"
             )
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            if not mttr_data.empty:
-                st.write("**نتائج حساب MTTR:**")
+            if uploaded_file is not None:
+                file_content = uploaded_file.getvalue().decode("utf-8")
+        
+        elif upload_option == "إدخال النص":
+            file_content = st.text_area(
+                "الصق محتوى السجل هنا:",
+                height=200,
+                help="الصق محتوى الملف النصي هنا"
+            )
+        
+        else:  # رابط مباشر
+            url = st.text_input("أدخل رابط الملف:")
+            if url:
+                try:
+                    import requests
+                    response = requests.get(url)
+                    if response.status_code == 200:
+                        file_content = response.text
+                        st.success("تم تحميل الملف بنجاح!")
+                except:
+                    st.error("تعذر تحميل الملف من الرابط")
+        
+        # معلومات إضافية
+        st.markdown("---")
+        st.markdown("### ℹ️ معلومات")
+        st.markdown("""
+        - يدعم ملفات سجلات الماكينات
+        - تحليل الفترات الزمنية بين الأحداث
+        - تصدير التقارير بصيغة CSV
+        - واجهة باللغة العربية
+        """)
+    
+    # المحتوى الرئيسي
+    if file_content:
+        try:
+            with st.spinner("جاري معالجة البيانات..."):
+                df = parse_log_file(file_content)
                 
-                # عرض البيانات التفصيلية
-                st.table(mttr_data)
+                if df.empty:
+                    st.error("لم يتم العثور على بيانات صالحة في الملف")
+                    return
                 
-                # إحصائيات MTTR
-                st.write("**إحصائيات MTTR:**")
+                # عرض لوحة التحكم
+                create_dashboard(df)
                 
-                # حسب نوع العطل
-                if len(selected_failures) > 1:
-                    stats_by_event = mttr_data.groupby('الحدث الأول').agg({
-                        'المدة (دقيقة)': ['count', 'mean', 'sum']
-                    }).round(2)
+                # قسم التحليل المتقدم
+                st.markdown("---")
+                st.markdown('<h2 class="sub-header">🔍 تحليل متقدم</h2>', unsafe_allow_html=True)
+                
+                advanced_tab1, advanced_tab2 = st.tabs(["بحث متقدم", "مقارنة"])
+                
+                with advanced_tab1:
+                    col1, col2 = st.columns(2)
                     
-                    stats_by_event.columns = ['عدد المرات', 'متوسط MTTR (دقيقة)', 'إجمالي الوقت (دقيقة)']
-                    st.table(stats_by_event)
+                    with col1:
+                        search_term = st.text_input("بحث في الأحداث:")
+                        if search_term:
+                            results = df[df['Event'].str.contains(search_term, case=False, na=False)]
+                            st.write(f"عدد النتائج: {len(results)}")
+                            st.dataframe(results[['Date', 'Time', 'Event', 'Details']], use_container_width=True)
+                    
+                    with col2:
+                        date_range = st.date_input(
+                            "اختر نطاق تاريخي:",
+                            value=(df['DateTime'].min().date(), df['DateTime'].max().date())
+                        )
+                        
+                        if len(date_range) == 2:
+                            mask = (df['DateTime'].dt.date >= date_range[0]) & \
+                                   (df['DateTime'].dt.date <= date_range[1])
+                            filtered = df[mask]
+                            st.write(f"الأحداث في النطاق المحدد: {len(filtered)}")
                 
-                # الإحصائيات الإجمالية
-                total_failures = len(mttr_data)
-                avg_mttr = mttr_data['المدة (دقيقة)'].mean()
-                total_downtime_minutes = total_downtime.total_seconds() / 60
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("إجمالي الأعطال", total_failures)
-                with col2:
-                    st.metric("متوسط MTTR", f"{avg_mttr:.1f} دقيقة")
-                with col3:
-                    st.metric("إجمالي وقت التوقف", f"{total_downtime_minutes:.1f} دقيقة")
-                
-                # تحميل البيانات
-                csv = mttr_data.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="تحميل بيانات MTTR",
-                    data=csv,
-                    file_name="mttr_data.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.warning("لم يتم العثور على الأحداث المحددة في الفترة المحددة")
+                with advanced_tab2:
+                    st.markdown("### مقارنة بين الأحداث")
+                    event1, event2 = st.columns(2)
+                    
+                    with event1:
+                        e1 = st.selectbox("الحدث الأول:", df['Event'].unique())
+                    
+                    with event2:
+                        e2 = st.selectbox("الحدث الثاني:", df['Event'].unique())
+                    
+                    if e1 and e2:
+                        df1 = df[df['Event'] == e1]
+                        df2 = df[df['Event'] == e2]
+                        
+                        comparison = pd.DataFrame({
+                            'المعيار': ['التكرار', 'أول ظهور', 'آخر ظهور', 'المتوسط الزمني'],
+                            e1: [
+                                len(df1),
+                                df1['DateTime'].min(),
+                                df1['DateTime'].max(),
+                                df1['DateTime'].diff().mean().total_seconds() / 60 if len(df1) > 1 else 0
+                            ],
+                            e2: [
+                                len(df2),
+                                df2['DateTime'].min(),
+                                df2['DateTime'].max(),
+                                df2['DateTime'].diff().mean().total_seconds() / 60 if len(df2) > 1 else 0
+                            ]
+                        })
+                        
+                        st.dataframe(comparison, use_container_width=True)
+        
+        except Exception as e:
+            st.error(f"حدث خطأ أثناء معالجة البيانات: {str(e)}")
     
-    # ------------------------------------------------------------------
-    # 7. حساب الوقت بين الأحداث
-    # ------------------------------------------------------------------
-    elif selected_option == "حساب الوقت بين الأحداث":
-        st.subheader("⏱️ حساب الوقت بين الأحداث")
+    else:
+        # صفحة الترحيب
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("""
+        ## 🚀 مرحباً بك في نظام تحليل سجلات الماكينات
         
-        # قسم إدخال الأحداث
-        st.write("**حدد الأحداث المراد حساب الوقت بينها:**")
+        ### كيفية الاستخدام:
+        1. **رفع ملف السجل** من الشريط الجانبي
+        2. **اختيار طريقة التحليل** المطلوبة
+        3. **استعراض النتائج** والرسوم البيانية
+        4. **تصدير التقارير** بصيغة CSV
         
-        all_events = filtered_df['Event'].unique().tolist()
+        ### المميزات:
+        - 📊 تحليل الفترات الزمنية بين الأحداث
+        - 📈 رسوم بيانية تفاعلية
+        - 🔍 بحث متقدم في البيانات
+        - 📥 تصدير التقارير بسهولة
+        - 📱 متوافق مع جميع الأجهزة
         
-        col1, col2 = st.columns(2)
+        ### أنواع الملفات المدعومة:
+        - ملفات نصية (.txt)
+        - سجلات النظام (.log)
+        - ملفات CSV
+        """)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # أمثلة
+        col1, col2, col3 = st.columns(3)
+        
         with col1:
-            # حدث أو أحداث أولية
-            selected_events1 = st.multiselect(
-                "الحدث/الأحداث الأولية:",
-                all_events,
-                default=['Sliver break'] if 'Sliver break' in all_events else []
-            )
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown("### 📋 مثال للبيانات")
+            st.code("""23.12.2024\t19:06:26\tStarting speed\tON
+23.12.2024\t19:06:56\tAutomatic mode\t
+23.12.2024\t19:11:04\tThick spots\tW0547""")
+            st.markdown('</div>', unsafe_allow_html=True)
         
         with col2:
-            # الحدث الثاني
-            selected_event2 = st.selectbox(
-                "الحدث الثاني:",
-                all_events,
-                index=all_events.index('Automatic mode') if 'Automatic mode' in all_events else 0
-            )
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown("### ⏱️ مثال للتحليل")
+            st.metric("المدة المتوسطة بين الأحداث", "15.2 دقيقة")
+            st.metric("عدد أحداث التشغيل", "48 مرة")
+            st.metric("المشاكل المسجلة", "12 حالة")
+            st.markdown('</div>', unsafe_allow_html=True)
         
-        if selected_events1 and selected_event2:
-            # حساب الوقت بين الأحداث
-            time_data, total_time = calculate_time_between(
-                df, selected_events1, selected_event2, start_datetime, end_datetime
-            )
-            
-            if not time_data.empty:
-                st.write("**النتائج:**")
-                
-                # عرض البيانات التفصيلية
-                st.table(time_data)
-                
-                # إحصائيات إجمالية
-                st.write("**الإحصائيات الإجمالية:**")
-                
-                # حسب الحدث الأول
-                if len(selected_events1) > 1:
-                    event_stats = time_data.groupby('الحدث الأول').agg({
-                        'المدة (دقيقة)': ['count', 'mean', 'sum']
-                    }).round(2)
-                    
-                    event_stats.columns = ['عدد المرات', 'المتوسط (دقيقة)', 'الإجمالي (دقيقة)']
-                    st.table(event_stats)
-                
-                # الإحصائيات الكلية
-                total_occurrences = len(time_data)
-                avg_time = time_data['المدة (دقيقة)'].mean()
-                total_minutes = total_time.total_seconds() / 60
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("إجمالي التكرارات", total_occurrences)
-                with col2:
-                    st.metric("متوسط الوقت", f"{avg_time:.1f} دقيقة")
-                with col3:
-                    st.metric("إجمالي الوقت", f"{total_minutes:.1f} دقيقة")
-                
-                # خيار لحساب إجمالي وقت حدث معين
-                if len(selected_events1) > 1:
-                    st.write("**حساب إجمالي وقت حدث معين:**")
-                    
-                    event_for_total = st.selectbox(
-                        "اختر حدث لحساب إجمالي وقته:",
-                        selected_events1
-                    )
-                    
-                    if event_for_total:
-                        event_total = time_data[time_data['الحدث الأول'] == event_for_total]['المدة (دقيقة)'].sum()
-                        st.success(f"إجمالي وقت {event_for_total}: {event_total:.1f} دقيقة")
-                
-                # تحميل البيانات
-                csv = time_data.to_csv(index=False, encoding='utf-8-sig')
-                st.download_button(
-                    label="تحميل البيانات",
-                    data=csv,
-                    file_name="time_between_events.csv",
-                    mime="text/csv"
-                )
-            else:
-                st.warning("لم يتم العثور على الأحداث المحددة في الفترة المحددة")
+        with col3:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
+            st.markdown("### 💡 نصائح سريعة")
+            st.markdown("""
+            1. تأكد من تنسيق التاريخ
+            2. استخدم الفواصل بين الحقول
+            3. احفظ التقارير بانتظام
+            4. استخدم البحث للتصفية
+            """)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-else:
-    # واجهة بدون ملف مرفوع
-    st.info("👆 الرجاء رفع ملف السجل للبدء في التحليل")
-    
-    st.write("""
-    ### دليل الاستخدام:
-    
-    1. **رفع ملف السجل**: اختر ملف Logbook_YYYYMMDD.txt من الماكينة
-    2. **اختيار التحليل**: اختر نوع التحليل من القائمة المنسدلة
-    3. **تحديد الفترة**: حدد الفترة الزمنية المراد تحليلها
-    4. **تحليل البيانات**: ستظهر النتائج حسب التحليل المختار
-    
-    ### أنواع التحاليل المتاحة:
-    
-    - **معاينة البيانات**: عرض البيانات الأصلية
-    - **احصائيات عامة**: إحصائيات عامة عن الأحداث
-    - **أنواع الأحداث**: عرض جميع أنواع الأحداث وتفاصيلها
-    - **تكرارات الأحداث**: تحليل تكرار كل نوع حدث
-    - **MTBF**: متوسط الوقت بين أعطال من نفس النوع
-    - **MTTR**: متوسط وقت الإصلاح بين العطل والعودة للتشغيل
-    - **حساب الوقت بين الأحداث**: حساب الوقت بين أي حدثين أو مجموعات
-    """)
-
-# تذييل الصفحة
-st.markdown("---")
-st.markdown("نظام تحليل سجلات الماكينة - إصدار مبسط")
+if __name__ == "__main__":
+    main()
