@@ -3,7 +3,6 @@ import numpy as np
 from datetime import datetime, timedelta
 import streamlit as st
 from collections import Counter
-import matplotlib.pyplot as plt
 import io
 
 # تهيئة صفحة Streamlit
