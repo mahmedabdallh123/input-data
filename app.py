@@ -1,35 +1,169 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from datetime import datetime, time as dtime
+from datetime import timedelta, datetime
+from io import BytesIO
+import base64
+import tempfile
 import os
 
-st.set_page_config(page_title="Fault Card Analyzer", layout="wide")
+# تهيئة إعدادات الصفحة
+st.set_page_config(
+    page_title="عرض بيانات السجل التقني",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-# ------------------------
-# وظيفة تحميل البيانات من ملف النص
-# ------------------------
-@st.cache_data
-def load_text_file(file_path):
+# إضافة CSS مخصص لتحسين المظهر
+st.markdown("""
+<style>
+    .main-header {
+        text-align: center;
+        color: #1E3A8A;
+        padding: 20px 0;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        border-radius: 10px;
+        margin-bottom: 30px;
+    }
+    .stDataFrame {
+        border-radius: 10px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .metric-card {
+        background: white;
+        padding: 15px;
+        border-radius: 10px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        margin: 10px 0;
+    }
+    .highlight-box {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px;
+        border-radius: 10px;
+        text-align: center;
+        margin: 10px 0;
+    }
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    }
+    .downtime-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    .upload-box {
+        border: 2px dashed #667eea;
+        border-radius: 10px;
+        padding: 20px;
+        text-align: center;
+        margin: 20px 0;
+        background-color: #f8f9fa;
+    }
+    .file-info {
+        background: #e8f4fd;
+        padding: 10px;
+        border-radius: 5px;
+        margin: 10px 0;
+        border-left: 4px solid #2196F3;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# عنوان التطبيق
+st.markdown('<div class="main-header"><h1>📋 نظام عرض وتحليل بيانات السجل التقني</h1><h3>عرض وتحليل بيانات أعطال المعدات + حساب أوقات التوقف</h3></div>', unsafe_allow_html=True)
+
+# الشريط الجانبي لتحميل الملف
+with st.sidebar:
+    st.markdown("### 📁 تحميل البيانات")
+    
+    # خيار رفع الملف
+    uploaded_file = st.file_uploader(
+        "رفع ملف البيانات (TXT أو Excel أو CSV)",
+        type=['txt', 'xlsx', 'xls', 'csv'],
+        help="يمكنك رفع ملف نصي (.txt) أو Excel (.xlsx, .xls) أو CSV"
+    )
+    
+    # إعدادات معالجة ملفات TXT
+    if uploaded_file and uploaded_file.name.endswith('.txt'):
+        st.markdown("#### ⚙️ إعدادات معالجة ملف TXT")
+        txt_separator = st.selectbox(
+            "محدد الأعمدة (Separator):",
+            ["Tab (\\t)", "Comma (,)", "Semicolon (;)", "Space"],
+            index=0
+        )
+        
+        skip_lines = st.number_input(
+            "عدد الأسطر لتخطيها من البداية:",
+            min_value=0,
+            value=0,
+            step=1
+        )
+        
+        skip_empty_lines = st.checkbox("تخطي الأسطر الفارغة", value=True)
+        skip_comments = st.checkbox("تخطي الأسطر التي تبدأ بـ =", value=True)
+    
+    # زر تحميل البيانات التجريبية
+    use_sample_data = st.checkbox("استخدام بيانات تجريبية", value=False)
+    
+    # زر تحديث
+    if st.button("🔄 تحديث البيانات", use_container_width=True):
+        st.rerun()
+    
+    st.markdown("---")
+    st.markdown("#### ⚙️ إعدادات العرض")
+    
+    # خيارات عرض البيانات
+    show_stats = st.checkbox("عرض الإحصائيات", value=True)
+    show_downtime = st.checkbox("حساب أوقات التوقف", value=True)
+    
+    st.markdown("---")
+    st.markdown("#### ℹ️ معلومات:")
+    st.info("""
+    **مميزات التطبيق:**
+    - رفع ملفات TXT, Excel, CSV
+    - معالجة تلقائية لملفات السجلات
+    - عرض كامل للبيانات
+    - إحصائيات تفصيلية
+    - حساب أوقات التوقف
+    - تصدير للعديد من الصيغ
+    """)
+
+# دالة لمعالجة ملفات TXT
+def process_txt_file(file_content, separator="Tab (\\t)", skip_lines=0, skip_empty=True, skip_comments=True):
     """
-    تحميل البيانات من ملف النص مع تخطي الخطوط غير الضرورية
+    معالجة ملفات TXT وتحويلها إلى DataFrame
     """
+    # تحويل محتوى الملف إلى أسطر
+    lines = file_content.decode('utf-8').splitlines()
+    
+    # تخطي الأسطر المطلوبة
+    if skip_lines > 0:
+        lines = lines[skip_lines:]
+    
     data = []
-    
-    try:
-        with open(file_path, 'r', encoding='utf-8') as file:
-            lines = file.readlines()
-    except UnicodeDecodeError:
-        with open(file_path, 'r', encoding='latin-1') as file:
-            lines = file.readlines()
-    
     for line in lines:
-        # تخطي الخطوط الفارغة أو التي تبدأ بـ "=" أو لا تحتوي على بيانات
-        if line.startswith("=") or line.strip() == "":
+        # تخطي الأسطر الفارغة إذا كان الخيار مفعل
+        if skip_empty and line.strip() == "":
             continue
         
-        # تقسيم البيانات (يمكن تعديل الفاصل حسب تنسيق ملفك)
-        parts = line.split("\t") if "\t" in line else line.split(",")
+        # تخطي الأسطر التي تبدأ بـ = إذا كان الخيار مفعل
+        if skip_comments and line.startswith("="):
+            continue
+        
+        # اختيار المحدد المناسب
+        if separator == "Tab (\\t)":
+            parts = line.split("\t")
+        elif separator == "Comma (,)":
+            parts = line.split(",")
+        elif separator == "Semicolon (;)":
+            parts = line.split(";")
+        elif separator == "Space":
+            parts = line.split()
+        else:
+            parts = line.split("\t")  # الافتراضي Tab
         
         # تأكد من أن لدينا 4 أعمدة على الأقل
         while len(parts) < 4:
@@ -40,369 +174,756 @@ def load_text_file(file_path):
         data.append(cleaned_parts)
     
     # إنشاء DataFrame
-    df = pd.DataFrame(data, columns=["Date", "Time", "Event", "Details"])
-    
-    # دمج التاريخ والوقت في عمود DateTime
-    df['DateTime'] = pd.to_datetime(
-        df['Date'].astype(str) + ' ' + df['Time'].astype(str),
-        dayfirst=True,
-        errors='coerce'
-    )
-    
-    # حذف الصفوف التي تحتوي على قيم ناقصة في DateTime
-    df = df.dropna(subset=['DateTime']).sort_values('DateTime').reset_index(drop=True)
-    
-    return df
+    if data:
+        df = pd.DataFrame(data, columns=["Date", "Time", "Event", "Details"])
+        
+        # تسجيل معلومات المعالجة
+        st.sidebar.success(f"✅ تم معالجة {len(data)} سجل من ملف TXT")
+        return df
+    else:
+        st.sidebar.error("❌ لم يتم استخراج أي بيانات من الملف")
+        return None
 
-# ------------------------
-# واجهة رفع الملف
-# ------------------------
-st.title("🧾 Fault Card Analyzer - تحليل تفاعلي (MTTR / MTBF)")
-
-st.sidebar.header("📁 تحميل البيانات")
-upload_option = st.sidebar.radio("اختر مصدر البيانات:", 
-                                  ["رفع ملف جديد", "استخدام ملف محفوظ مسبقاً"])
-
-if upload_option == "رفع ملف جديد":
-    uploaded_file = st.sidebar.file_uploader("اختر ملف السجل (txt أو csv أو xlsx)", 
-                                           type=['txt', 'csv', 'xlsx'])
-    
+# دالة لتحميل البيانات من الملف المرفوع
+@st.cache_data
+def load_data(uploaded_file=None, use_sample=False, txt_params=None):
+    """
+    تحميل البيانات من الملف المرفوع أو استخدام بيانات تجريبية
+    """
     if uploaded_file is not None:
-        # حفظ الملف المؤقت
-        temp_path = f"temp_uploaded_file.{uploaded_file.name.split('.')[-1]}"
-        with open(temp_path, 'wb') as f:
-            f.write(uploaded_file.getbuffer())
-        
-        # تحميل البيانات حسب نوع الملف
-        if uploaded_file.name.endswith('.txt'):
-            df = load_text_file(temp_path)
-        elif uploaded_file.name.endswith('.csv'):
-            df = pd.read_csv(temp_path)
-        elif uploaded_file.name.endswith('.xlsx'):
-            df = pd.read_excel(temp_path)
-        
-        # إنشاء عمود DateTime إذا لم يكن موجوداً
-        if 'DateTime' not in df.columns:
-            if 'Date' in df.columns and 'Time' in df.columns:
-                df['DateTime'] = pd.to_datetime(
-                    df['Date'].astype(str) + ' ' + df['Time'].astype(str),
-                    dayfirst=True,
+        try:
+            # تحديد نوع الملف وتحويله
+            if uploaded_file.name.endswith('.txt'):
+                if txt_params:
+                    df = process_txt_file(
+                        uploaded_file.getvalue(),
+                        separator=txt_params.get('separator', "Tab (\\t)"),
+                        skip_lines=txt_params.get('skip_lines', 0),
+                        skip_empty=txt_params.get('skip_empty', True),
+                        skip_comments=txt_params.get('skip_comments', True)
+                    )
+                else:
+                    df = process_txt_file(uploaded_file.getvalue())
+                
+                if df is not None:
+                    return df
+            
+            elif uploaded_file.name.endswith('.csv'):
+                df = pd.read_csv(uploaded_file)
+                st.sidebar.success(f"✅ تم تحميل {len(df)} سجل من ملف CSV")
+                return df
+            
+            else:  # Excel files
+                df = pd.read_excel(uploaded_file)
+                st.sidebar.success(f"✅ تم تحميل {len(df)} سجل من ملف Excel")
+                return df
+            
+        except Exception as e:
+            st.sidebar.error(f"❌ خطأ في تحميل الملف: {e}")
+            return None
+    
+    elif use_sample:
+        # إنشاء بيانات تجريبية للعرض
+        num_records = 100
+        sample_data = {
+            "Date": pd.date_range(start="2024-01-01", periods=num_records, freq='H').strftime('%Y-%m-%d'),
+            "Time": [f"{i%24:02d}:{(i*30)%60:02d}" for i in range(num_records)],
+            "Event": (["Automatic mode", "Manual mode", "Error 001", "Maintenance", 
+                     "System Reset", "Error 002", "Calibration", "Error 003"] * 13)[:num_records],
+            "Details": [f"تفاصيل السجل رقم {i+1}" for i in range(num_records)]
+        }
+        df = pd.DataFrame(sample_data)
+        st.sidebar.warning("⚠️ يتم عرض بيانات تجريبية")
+        return df
+    
+    else:
+        return None
+
+# دالة لتحضير البيانات
+def prepare_data(df):
+    """
+    تحضير البيانات وإنشاء عمود DateTime
+    """
+    if df is None or len(df) == 0:
+        return None
+    
+    df_clean = df.copy()
+    
+    # محاولة إنشاء عمود DateTime من Date و Time
+    try:
+        if 'DateTime' in df_clean.columns:
+            df_clean['DateTime'] = pd.to_datetime(df_clean['DateTime'], errors='coerce')
+        elif 'Date' in df_clean.columns and 'Time' in df_clean.columns:
+            # محاولة تنسيقات مختلفة للتاريخ والوقت
+            for date_format in ['%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']:
+                try:
+                    df_clean['DateTime'] = pd.to_datetime(
+                        df_clean['Date'].astype(str) + ' ' + df_clean['Time'].astype(str),
+                        format=f"{date_format} %H:%M",
+                        errors='coerce'
+                    )
+                    if not df_clean['DateTime'].isna().all():
+                        break
+                except:
+                    continue
+            
+            # إذا فشلت المحاولات السابقة، استخدم التحويل العام
+            if df_clean['DateTime'].isna().all() or 'DateTime' not in df_clean.columns:
+                df_clean['DateTime'] = pd.to_datetime(
+                    df_clean['Date'].astype(str) + ' ' + df_clean['Time'].astype(str),
                     errors='coerce'
                 )
-            else:
-                st.error("الملف يجب أن يحتوي على أعمدة التاريخ والوقت")
-                st.stop()
         
-        st.sidebar.success(f"✅ تم تحميل {len(df)} سجل")
+        elif 'Date' in df_clean.columns:
+            df_clean['DateTime'] = pd.to_datetime(df_clean['Date'], errors='coerce')
         
-        # حفظ البيانات في الجلسة
-        st.session_state['dataframe'] = df
+        # إزالة الصفوف التي تحتوي على قيم ناقصة في DateTime
+        original_count = len(df_clean)
+        df_clean = df_clean.dropna(subset=['DateTime']).copy()
+        removed_count = original_count - len(df_clean)
         
-        # تنظيف الملف المؤقت
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-else:
-    # استخدام مسار افتراضي
-    default_path = r"C:\Users\LAP ME\Desktop\داتا ساينس دبلومه\projects\card12 data\Logbook_20241225.txt"
+        if removed_count > 0:
+            st.info(f"⚠️ تم إزالة {removed_count} سجل بسبب تاريخ/وقت غير صالح")
+        
+    except Exception as e:
+        st.warning(f"⚠️ تعذر إنشاء عمود التاريخ والوقت: {e}")
     
-    if st.sidebar.button("تحميل من المسار الافتراضي"):
-        if os.path.exists(default_path):
-            df = load_text_file(default_path)
-            st.session_state['dataframe'] = df
-            st.sidebar.success(f"✅ تم تحميل {len(df)} سجل")
-        else:
-            st.sidebar.error("❌ الملف الافتراضي غير موجود")
+    return df_clean
 
-# التحقق من وجود البيانات
-if 'dataframe' not in st.session_state:
-    st.warning("⚠️ يرجى تحميل ملف البيانات أولاً من الشريط الجانبي")
+# دالة لحساب مدة التوقف
+def calculate_downtime(df, event_name, reference_event="Automatic mode"):
+    """
+    حساب إجمالي مدة التوقف لحدث معين
+    """
+    if df is None or 'DateTime' not in df.columns:
+        return 0, 0, []
+    
+    # فرز البيانات حسب الوقت
+    df_sorted = df.sort_values('DateTime').reset_index(drop=True)
+    
+    # البحث عن أحداث التوقف وأحداث المرجع
+    downtime_events = df_sorted[df_sorted['Event'].str.contains(event_name, case=False, na=False)]
+    reference_events = df_sorted[df_sorted['Event'].str.contains(reference_event, case=False, na=False)]
+    
+    if len(downtime_events) == 0 or len(reference_events) == 0:
+        return 0, len(downtime_events), []
+    
+    # حساب مدة كل توقف
+    downtime_periods = []
+    total_downtime = timedelta()
+    
+    for idx, event in downtime_events.iterrows():
+        # البحث عن أقرب حدث مرجعي بعد حدث التوقف
+        next_ref = reference_events[reference_events['DateTime'] > event['DateTime']]
+        
+        if not next_ref.empty:
+            downtime_start = event['DateTime']
+            downtime_end = next_ref.iloc[0]['DateTime']
+            duration = downtime_end - downtime_start
+            
+            downtime_periods.append({
+                'بداية التوقف': downtime_start,
+                'نهاية التوقف': downtime_end,
+                'المدة (دقائق)': duration.total_seconds() / 60,
+                'الحدث': event['Event'],
+                'التفاصيل': event.get('Details', '')
+            })
+            
+            total_downtime += duration
+    
+    return total_downtime.total_seconds() / 60, len(downtime_events), downtime_periods
+
+# دالة لحساب مدة التوقف لمجموعة أحداث
+def calculate_group_downtime(df, event_list, reference_event="Automatic mode"):
+    """
+    حساب إجمالي مدة التوقف لمجموعة أحداث
+    """
+    if df is None or 'DateTime' not in df.columns:
+        return 0, 0, []
+    
+    # فرز البيانات حسب الوقت
+    df_sorted = df.sort_values('DateTime').reset_index(drop=True)
+    
+    # البحث عن أحداث التوقف (أي من الأحداث في القائمة)
+    downtime_events = df_sorted[df_sorted['Event'].apply(lambda x: any(str(event) in str(x) for event in event_list))]
+    reference_events = df_sorted[df_sorted['Event'].str.contains(reference_event, case=False, na=False)]
+    
+    if len(downtime_events) == 0 or len(reference_events) == 0:
+        return 0, len(downtime_events), []
+    
+    # حساب مدة كل توقف
+    downtime_periods = []
+    total_downtime = timedelta()
+    
+    for idx, event in downtime_events.iterrows():
+        # البحث عن أقرب حدث مرجعي بعد حدث التوقف
+        next_ref = reference_events[reference_events['DateTime'] > event['DateTime']]
+        
+        if not next_ref.empty:
+            downtime_start = event['DateTime']
+            downtime_end = next_ref.iloc[0]['DateTime']
+            duration = downtime_end - downtime_start
+            
+            downtime_periods.append({
+                'بداية التوقف': downtime_start,
+                'نهاية التوقف': downtime_end,
+                'المدة (دقائق)': duration.total_seconds() / 60,
+                'الحدث': event['Event'],
+                'التفاصيل': event.get('Details', '')
+            })
+            
+            total_downtime += duration
+    
+    return total_downtime.total_seconds() / 60, len(downtime_events), downtime_periods
+
+# دالة لتحويل DataFrame إلى Excel وتنزيله
+def convert_to_excel_download(df, filename="organized_data.xlsx"):
+    """
+    تحويل DataFrame إلى ملف Excel وتوفيره للتنزيل
+    """
+    try:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Data')
+        excel_data = output.getvalue()
+        
+        b64 = base64.b64encode(excel_data).decode()
+        href = f'<a href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}" download="{filename}">📥 انقر للتحميل</a>'
+        return href
+    except Exception as e:
+        st.error(f"❌ خطأ في تحويل الملف: {e}")
+        return None
+
+# تحضير معاملات ملف TXT إذا كان موجوداً
+txt_params = None
+if uploaded_file and uploaded_file.name.endswith('.txt'):
+    txt_params = {
+        'separator': txt_separator,
+        'skip_lines': int(skip_lines),
+        'skip_empty': skip_empty_lines,
+        'skip_comments': skip_comments
+    }
+
+# تحميل البيانات
+df_raw = load_data(uploaded_file, use_sample_data, txt_params)
+
+# تحضير البيانات
+if df_raw is not None:
+    df = prepare_data(df_raw)
+    
+    # إظهار معلومات الملف المرفوع
+    if uploaded_file:
+        st.markdown(f"""
+        <div class="file-info">
+            <h4>📄 معلومات الملف المرفوع</h4>
+            <p><strong>اسم الملف:</strong> {uploaded_file.name}</p>
+            <p><strong>نوع الملف:</strong> {uploaded_file.type if hasattr(uploaded_file, 'type') else 'غير معروف'}</p>
+            <p><strong>عدد السجلات:</strong> {len(df)}</p>
+            <p><strong>الأعمدة:</strong> {', '.join(df.columns.tolist())}</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # زر لتحويل الملف المعالج إلى Excel
+        if st.button("💾 حفظ البيانات المعالجة كملف Excel", key="save_processed"):
+            download_link = convert_to_excel_download(df, f"processed_{uploaded_file.name.replace('.txt', '.xlsx')}")
+            if download_link:
+                st.markdown(download_link, unsafe_allow_html=True)
+                st.success("✅ تم تجهيز ملف Excel للتحميل")
+else:
+    df = None
+
+# الرسالة الرئيسية إذا لم يتم تحميل بيانات
+if df is None or len(df) == 0:
+    st.markdown("""
+    <div class="upload-box">
+        <h3>📁 لم يتم تحميل أي بيانات</h3>
+        <p>يرجى رفع ملف بيانات (TXT أو Excel أو CSV) من الشريط الجانبي</p>
+        <p>أو تفعيل خيار "استخدام بيانات تجريبية"</p>
+        
+        <h4>📝 معلومات عن ملفات TXT:</h4>
+        <p>التطبيق يدعم معالجة ملفات السجلات النصية التي تحتوي على:</p>
+        <ul>
+            <li>أعمدة مفصولة بـ Tab أو فاصلة أو فاصلة منقوطة</li>
+            <li>التنسيق: التاريخ | الوقت | الحدث | التفاصيل</li>
+            <li>يمكن تخطي الأسطر الأولى أو الفارغة</li>
+        </ul>
+    </div>
+    """, unsafe_allow_html=True)
     st.stop()
 
-df = st.session_state['dataframe']
+# قسم العرض الرئيسي
+tab1, tab2, tab3, tab4 = st.tabs(["📋 عرض البيانات", "📊 الإحصائيات", "⏱ حساب التوقف", "📥 التصدير"])
 
-# ------------------------
-# عرض عينة من البيانات
-# ------------------------
-with st.expander("👁️ عرض عينة من البيانات", expanded=False):
-    st.write(f"عدد السجلات الكلي: {len(df)}")
-    st.dataframe(df.head(100))
+# إنشاء df_filtered كنسخة من df للاستخدام في جميع الأقسام
+df_filtered = df.copy()
+
+with tab1:
+    st.header("📋 عرض البيانات التفصيلي")
     
-    # إحصائيات عن الأحداث
-    st.subheader("📊 إحصائيات الأحداث")
-    event_counts = df['Event'].value_counts().head(20)
-    st.bar_chart(event_counts)
-
-# ------------------------
-# واجهة اختيار الحدث
-# ------------------------
-st.header("🔧 إعدادات التحليل")
-
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    all_events = sorted(df['Event'].dropna().unique().tolist())
-    selected_event = st.selectbox("اختر نوع العطل من القائمة:", 
-                                 options=all_events,
-                                 help="اختر الحدث الذي تريد تحليل تكراراته وأوقات الإصلاح")
+    # إعدادات عرض البيانات
+    col1, col2, col3 = st.columns(3)
     
-    manual_event = st.text_input("أو اكتب اسم العطل يدويًا:", 
-                                value="",
-                                help="يمكنك كتابة اسم عطل غير موجود في القائمة")
-
-with col2:
-    reference_event = st.selectbox("اختر الحدث المرجعي (وضع التشغيل):", 
-                                  options=all_events, 
-                                  index=all_events.index('Automatic mode') if 'Automatic mode' in all_events else 0,
-                                  help="الحدث الذي يدل على انتهاء الإصلاح والعودة للتشغيل")
-
-# اختيار الحدث للتحليل
-event_to_use = manual_event.strip() if manual_event.strip() != "" else selected_event
-
-# ------------------------
-# نطاق زمني للتحليل
-# ------------------------
-st.markdown("### ⏰ تحديد النطاق الزمني")
-col3, col4 = st.columns(2)
-
-with col3:
-    min_date = df['DateTime'].dt.date.min()
-    max_date = df['DateTime'].dt.date.max()
+    with col1:
+        rows_to_show = st.slider("عدد الصفوف للعرض:", 10, 1000, 100, 10)
     
-    date_from = st.date_input("من تاريخ:", 
-                             value=min_date,
-                             min_value=min_date,
-                             max_value=max_date)
-
-with col4:
-    date_to = st.date_input("إلى تاريخ:", 
-                           value=max_date,
-                           min_value=min_date,
-                           max_value=max_date)
-
-# اختيار وقت إضافي
-col5, col6 = st.columns(2)
-with col5:
-    time_from = st.time_input("وقت البداية (اختياري):", 
-                             value=dtime(0, 0))
-with col6:
-    time_to = st.time_input("وقت النهاية (اختياري):", 
-                           value=dtime(23, 59))
-
-# بناء تواريخ كاملة
-dt_from = datetime.combine(date_from, time_from)
-dt_to = datetime.combine(date_to, time_to)
-
-st.info(f"**النطاق الزمني:** {dt_from.strftime('%Y-%m-%d %H:%M')} → {dt_to.strftime('%Y-%m-%d %H:%M')}")
-
-# ------------------------
-# زر التنفيذ
-# ------------------------
-if st.button("🔎 بدء التحليل", type="primary", use_container_width=True):
+    with col2:
+        # الحصول على أسماء الأعمدة المتاحة
+        available_columns = df.columns.tolist()
+        sort_column = st.selectbox("ترتيب البيانات حسب:", available_columns)
     
-    with st.spinner("جاري تحليل البيانات..."):
-        # تصفية النطاق الزمني
-        df_range = df[(df['DateTime'] >= dt_from) & (df['DateTime'] <= dt_to)].copy()
+    with col3:
+        sort_order = st.radio("نوع الترتيب:", ["تصاعدي", "تنازلي"], horizontal=True)
+    
+    # تصفية حسب التاريخ إذا كان موجوداً
+    if 'DateTime' in df.columns and len(df) > 0:
+        st.markdown("### ⏰ تصفية حسب التاريخ")
+        date_col1, date_col2 = st.columns(2)
         
-        if df_range.empty:
-            st.error("لا توجد سجلات داخل النطاق الزمني المختار.")
+        with date_col1:
+            try:
+                min_date = df['DateTime'].min().date()
+                max_date = df['DateTime'].max().date()
+                start_date = st.date_input("من تاريخ:", 
+                                          value=min_date,
+                                          min_value=min_date,
+                                          max_value=max_date)
+            except:
+                start_date = st.date_input("من تاريخ:", value=pd.Timestamp.now().date())
+        
+        with date_col2:
+            try:
+                end_date = st.date_input("إلى تاريخ:", 
+                                        value=max_date,
+                                        min_value=min_date,
+                                        max_value=max_date)
+            except:
+                end_date = st.date_input("إلى تاريخ:", value=pd.Timestamp.now().date())
+        
+        # تطبيق التصفية
+        try:
+            df_filtered = df[(df['DateTime'].dt.date >= start_date) & 
+                            (df['DateTime'].dt.date <= end_date)].copy()
+        except:
+            df_filtered = df.copy()
+            st.warning("⚠️ تعذر تطبيق التصفية التاريخية")
+    
+    # تصفية حسب الحدث
+    if 'Event' in df_filtered.columns and len(df_filtered) > 0:
+        st.markdown("### 🔍 تصفية حسب الحدث")
+        unique_events = df_filtered['Event'].dropna().unique().tolist()
+        if unique_events:
+            selected_events = st.multiselect("اختر الأحداث:", unique_events)
+            
+            if selected_events:
+                df_filtered = df_filtered[df_filtered['Event'].isin(selected_events)]
+        else:
+            st.info("لا توجد أحداث للتصفية")
+    
+    # ترتيب البيانات
+    ascending_order = True if sort_order == "تصاعدي" else False
+    try:
+        df_display = df_filtered.sort_values(by=sort_column, ascending=ascending_order).head(rows_to_show)
+    except:
+        df_display = df_filtered.head(rows_to_show)
+        st.warning(f"⚠️ تعذر الترتيب حسب العمود '{sort_column}'")
+    
+    # عرض البيانات
+    st.markdown(f"### 📄 عرض البيانات ({len(df_display)} من {len(df_filtered)} سجل)")
+    
+    # تكوين أعمدة العرض
+    column_config = {}
+    if 'DateTime' in df_display.columns:
+        column_config["DateTime"] = st.column_config.DatetimeColumn("التاريخ والوقت")
+    if 'Date' in df_display.columns:
+        column_config["Date"] = st.column_config.TextColumn("التاريخ")
+    if 'Time' in df_display.columns:
+        column_config["Time"] = st.column_config.TextColumn("الوقت")
+    if 'Event' in df_display.columns:
+        column_config["Event"] = st.column_config.TextColumn("الحدث")
+    if 'Details' in df_display.columns:
+        column_config["Details"] = st.column_config.TextColumn("التفاصيل", width="large")
+    
+    # عرض البيانات
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        height=600,
+        column_config=column_config if column_config else None
+    )
+    
+    # عرض ملخص سريع
+    st.markdown(f"""
+    <div class="metric-card">
+        <h4>📊 ملخص البيانات</h4>
+        <p>• عدد السجلات الكلي: <strong>{len(df):,}</strong></p>
+        <p>• عدد السجلات بعد التصفية: <strong>{len(df_filtered):,}</strong></p>
+        <p>• عدد السجلات المعروضة: <strong>{len(df_display):,}</strong></p>
+    </div>
+    """, unsafe_allow_html=True)
+
+with tab2:
+    st.header("📊 الإحصائيات التحليلية")
+    
+    if len(df_filtered) > 0:
+        # مؤشرات سريعة
+        st.subheader("📈 مؤشرات سريعة")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.metric("إجمالي السجلات", f"{len(df_filtered):,}")
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col2:
+            if 'DateTime' in df_filtered.columns:
+                try:
+                    date_range = (df_filtered['DateTime'].max() - df_filtered['DateTime'].min()).days
+                    st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                    st.metric("المدة الزمنية (أيام)", f"{date_range:,}")
+                    st.markdown('</div>', unsafe_allow_html=True)
+                except:
+                    st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                    st.metric("المدة الزمنية", "غير متاح")
+                    st.markdown('</div>', unsafe_allow_html=True)
+        
+        with col3:
+            if 'Event' in df_filtered.columns:
+                unique_events = df_filtered['Event'].nunique()
+                st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+                st.metric("عدد أنواع الأحداث", f"{unique_events:,}")
+                st.markdown('</div>', unsafe_allow_html=True)
+        
+        # إحصائيات الأحداث
+        if 'Event' in df_filtered.columns:
+            st.subheader("📋 توزيع الأحداث")
+            event_stats = df_filtered['Event'].value_counts().reset_index()
+            event_stats.columns = ['الحدث', 'التكرار']
+            
+            # عرض جدول التكرارات
+            st.dataframe(
+                event_stats,
+                use_container_width=True,
+                height=400
+            )
+            
+            # عرض إجماليات
+            st.subheader("📊 إجماليات الأحداث")
+            
+            # أعلى 5 أحداث
+            if len(event_stats) > 0:
+                top_5_events = event_stats.head(5)
+                for idx, row in top_5_events.iterrows():
+                    percentage = (row['التكرار'] / len(df_filtered)) * 100 if len(df_filtered) > 0 else 0
+                    st.markdown(f"""
+                    <div class="metric-card">
+                        <strong>{row['الحدث']}</strong>: {row['التكرار']} مرة 
+                        ({percentage:.1f}% من إجمالي الأحداث)
+                    </div>
+                    """, unsafe_allow_html=True)
+        
+        # البحث في التفاصيل
+        if 'Details' in df_filtered.columns:
+            st.subheader("🔍 البحث في التفاصيل")
+            search_term = st.text_input("ابحث في التفاصيل:")
+            
+            if search_term:
+                try:
+                    search_results = df_filtered[df_filtered['Details'].str.contains(search_term, case=False, na=False)]
+                    st.write(f"نتائج البحث ({len(search_results)} سجل):")
+                    st.dataframe(search_results.head(20), use_container_width=True)
+                except:
+                    st.warning("⚠️ تعذر البحث في التفاصيل")
+
+with tab3:
+    st.header("⏱ حساب إجمالي مدة التوقف")
+    
+    if 'Event' not in df.columns:
+        st.warning("⚠️ البيانات لا تحتوي على عمود 'Event' لحساب التوقف.")
+        st.stop()
+    
+    # قسمين: لحساب توقف حدث واحد و لمجموعة أحداث
+    downtime_tab1, downtime_tab2 = st.tabs(["📊 توقف حدث واحد", "📈 توقف مجموعة أحداث"])
+    
+    with downtime_tab1:
+        st.markdown("### حساب مدة التوقف لحدث معين")
+        
+        # اختيار الحدث
+        all_events = sorted(df['Event'].dropna().unique().tolist())
+        
+        if not all_events:
+            st.warning("⚠️ لا توجد أحداث في البيانات.")
             st.stop()
         
-        # استخراج الأعطال والأحداث المرجعية
-        failures = df_range[df_range['Event'].str.contains(event_to_use, 
-                                                          case=False, 
-                                                          na=False)].copy()
-        refs = df_range[df_range['Event'] == reference_event].copy()
+        col1, col2 = st.columns(2)
         
-        st.write(f"""
-        **ملخص العينات:**
-        - السجلات الكلية في النطاق: **{len(df_range)}**
-        - حالات العطل المختار ('{event_to_use}'): **{len(failures)}**
-        - أحداث المرجع ('{reference_event}'): **{len(refs)}**
-        """)
+        with col1:
+            selected_event = st.selectbox(
+                "اختر حدث التوقف:",
+                options=all_events,
+                key="single_event_select"
+            )
         
-        if failures.empty:
-            st.warning("لم يتم العثور على أي حالات للعطل المحدد ضمن النطاق.")
-            st.stop()
-        
-        # ------------------------
-        # حساب MTTR
-        # ------------------------
-        if not refs.empty:
-            # ربط كل عطل بأقرب مرجع بعده
-            failures = failures.sort_values('DateTime').reset_index(drop=True)
+        with col2:
+            # البحث عن حدث مرجعي مناسب
+            ref_options = all_events
+            ref_index = 0
+            if 'Automatic mode' in all_events:
+                ref_index = all_events.index('Automatic mode')
+            elif 'Manual mode' in all_events:
+                ref_index = all_events.index('Manual mode')
             
-            def find_next_ref(failure_time):
-                later_refs = refs[refs['DateTime'] > failure_time]
-                if not later_refs.empty:
-                    return later_refs['DateTime'].min()
-                return pd.NaT
+            reference_event = st.selectbox(
+                "اختر حدث التشغيل (المرجع):",
+                options=all_events,
+                index=ref_index,
+                key="single_ref_select"
+            )
+        
+        # زر الحساب
+        if st.button("🧮 حساب مدة التوقف", type="primary", key="calculate_single"):
+            with st.spinner("جاري حساب مدة التوقف..."):
+                total_minutes, event_count, periods = calculate_downtime(df, selected_event, reference_event)
+                
+                if event_count > 0:
+                    if periods:
+                        # عرض النتائج
+                        st.markdown(f"""
+                        <div class="highlight-box">
+                            <h2>📊 نتائج حساب التوقف</h2>
+                            <h3>إجمالي مدة التوقف: <span style="color: #FFD700">{total_minutes:.2f} دقيقة</span></h3>
+                            <p>عدد مرات التوقف: {event_count} مرة</p>
+                            <p>متوسط مدة التوقف: {total_minutes/event_count:.2f} دقيقة</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # تحويل المدة إلى ساعات وأيام
+                        hours = total_minutes / 60
+                        days = hours / 24
+                        
+                        # عرض بتنسيق جميل
+                        col_a, col_b, col_c = st.columns(3)
+                        
+                        with col_a:
+                            st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                            st.markdown(f"**إجمالي الدقائق**")
+                            st.markdown(f"# {total_minutes:.2f}")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        with col_b:
+                            st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                            st.markdown(f"**إجمالي الساعات**")
+                            st.markdown(f"# {hours:.2f}")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        with col_c:
+                            st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                            st.markdown(f"**إجمالي الأيام**")
+                            st.markdown(f"# {days:.2f}")
+                            st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        # عرض تفاصيل فترات التوقف
+                        st.subheader("📋 تفاصيل فترات التوقف")
+                        
+                        if periods:
+                            periods_df = pd.DataFrame(periods)
+                            st.dataframe(
+                                periods_df,
+                                use_container_width=True,
+                                column_config={
+                                    "بداية التوقف": st.column_config.DatetimeColumn("بداية التوقف"),
+                                    "نهاية التوقف": st.column_config.DatetimeColumn("نهاية التوقف"),
+                                    "المدة (دقائق)": st.column_config.NumberColumn("المدة (دقائق)", format="%.2f"),
+                                    "الحدث": st.column_config.TextColumn("الحدث"),
+                                    "التفاصيل": st.column_config.TextColumn("التفاصيل", width="large")
+                                }
+                            )
+                            
+                            # ملخص فترات التوقف
+                            st.subheader("📊 ملخص فترات التوقف")
+                            
+                            min_duration = periods_df['المدة (دقائق)'].min()
+                            max_duration = periods_df['المدة (دقائق)'].max()
+                            avg_duration = periods_df['المدة (دقائق)'].mean()
+                            
+                            col_d, col_e, col_f = st.columns(3)
+                            
+                            with col_d:
+                                st.metric("أقل مدة توقف", f"{min_duration:.2f} دقيقة")
+                            
+                            with col_e:
+                                st.metric("أكثر مدة توقف", f"{max_duration:.2f} دقيقة")
+                            
+                            with col_f:
+                                st.metric("المتوسط", f"{avg_duration:.2f} دقيقة")
+                    else:
+                        st.warning(f"⚠️ تم العثور على {event_count} حدث من نوع '{selected_event}' ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
+                else:
+                    st.error(f"❌ لم يتم العثور على أي حدث من نوع '{selected_event}' في البيانات.")
+    
+    with downtime_tab2:
+        st.markdown("### حساب مدة التوقف لمجموعة أحداث")
+        
+        # اختيار مجموعة الأحداث
+        all_events = sorted(df['Event'].dropna().unique().tolist())
+        
+        col1, col2 = st.columns([3, 1])
+        
+        with col1:
+            selected_events = st.multiselect(
+                "اختر مجموعة أحداث التوقف:",
+                options=all_events,
+                default=all_events[:2] if len(all_events) >= 2 else all_events,
+                key="group_events_select"
+            )
+        
+        with col2:
+            # البحث عن حدث مرجعي مناسب
+            ref_options = all_events
+            ref_index = 0
+            if 'Automatic mode' in all_events:
+                ref_index = all_events.index('Automatic mode')
+            elif 'Manual mode' in all_events:
+                ref_index = all_events.index('Manual mode')
             
-            failures['Next_Ref_Time'] = failures['DateTime'].apply(find_next_ref)
-            failures['Repair_Min'] = (failures['Next_Ref_Time'] - failures['DateTime']).dt.total_seconds() / 60
-            
-            # MTTR: متوسط وقت الإصلاح
-            valid_repairs = failures['Repair_Min'].dropna()
-            if not valid_repairs.empty:
-                mttr = valid_repairs.mean()
-                mttr_median = valid_repairs.median()
-                mttr_std = valid_repairs.std()
-            else:
-                mttr = mttr_median = mttr_std = np.nan
-        else:
-            st.warning(f"⚠️ لا توجد سجلات للحدث المرجعي '{reference_event}' داخل النطاق.")
-            failures['Repair_Min'] = np.nan
-            mttr = mttr_median = mttr_std = np.nan
+            reference_event = st.selectbox(
+                "اختر حدث التشغيل (المرجع):",
+                options=all_events,
+                index=ref_index,
+                key="group_ref_select"
+            )
         
-        # ------------------------
-        # حساب MTBF
-        # ------------------------
-        failures = failures.sort_values('DateTime').reset_index(drop=True)
-        failures['Prev_Failure'] = failures['DateTime'].shift(1)
-        failures['Time_Between_Min'] = (failures['DateTime'] - failures['Prev_Failure']).dt.total_seconds() / 60
-        
-        # MTBF: متوسط الوقت بين الأعطال
-        valid_between = failures['Time_Between_Min'].dropna()
-        if not valid_between.empty:
-            mtbf = valid_between.mean()
-            mtbf_median = valid_between.median()
-            mtbf_std = valid_between.std()
-        else:
-            mtbf = mtbf_median = mtbf_std = np.nan
-        
-        # ------------------------
-        # عرض النتائج
-        # ------------------------
-        st.success("✅ تم الانتهاء من التحليل!")
-        
-        # مؤشرات الأداء
-        st.header("📊 مؤشرات الأداء الرئيسية")
-        
-        col_a, col_b = st.columns(2)
-        
-        with col_a:
-            if not np.isnan(mttr):
-                st.metric("⏱ MTTR (متوسط وقت الإصلاح)", 
-                         f"{mttr:.1f} دقيقة",
-                         delta=f"الوسيط: {mttr_median:.1f} دقيقة")
-                st.caption(f"الانحراف المعياري: {mttr_std:.1f} دقيقة")
-            else:
-                st.metric("⏱ MTTR", "غير متاح")
-        
-        with col_b:
-            if not np.isnan(mtbf):
-                st.metric("⚙ MTBF (متوسط الوقت بين الأعطال)", 
-                         f"{mtbf:.1f} دقيقة",
-                         delta=f"الوسيط: {mtbf_median:.1f} دقيقة")
-                st.caption(f"الانحراف المعياري: {mtbf_std:.1f} دقيقة")
-            else:
-                st.metric("⚙ MTBF", "غير متاح")
-        
-        # ------------------------
-        # إحصائيات إضافية
-        # ------------------------
-        st.header("📈 إحصائيات تفصيلية")
-        
-        col_c, col_d, col_e = st.columns(3)
-        
-        with col_c:
-            st.info(f"**عدد الأعطال:** {len(failures)}")
-        
-        with col_d:
-            if not failures['Repair_Min'].isna().all():
-                min_repair = failures['Repair_Min'].min()
-                max_repair = failures['Repair_Min'].max()
-                st.info(f"**أقل/أكثر وقت إصلاح:** {min_repair:.1f} / {max_repair:.1f} دقيقة")
-        
-        with col_e:
-            if 'Time_Between_Min' in failures.columns and not failures['Time_Between_Min'].isna().all():
-                min_between = failures['Time_Between_Min'].min()
-                max_between = failures['Time_Between_Min'].max()
-                st.info(f"**أقل/أكثر وقت بين الأعطال:** {min_between:.1f} / {max_between:.1f} دقيقة")
-        
-        # ------------------------
-        # عرض جدول التفاصيل
-        # ------------------------
-        st.header("🧾 تفاصيل الأعطال")
-        
-        # تنسيق الأعمدة للعرض
-        display_df = failures.copy()
-        display_df['DateTime'] = display_df['DateTime'].dt.strftime('%Y-%m-%d %H:%M')
-        display_df['Next_Ref_Time'] = display_df['Next_Ref_Time'].dt.strftime('%Y-%m-%d %H:%M')
-        
-        # أعمدة للعرض
-        show_cols = []
-        for col in ['DateTime', 'Event', 'Details', 'Next_Ref_Time', 'Repair_Min', 'Time_Between_Min']:
-            if col in display_df.columns:
-                show_cols.append(col)
-        
-        st.dataframe(
-            display_df[show_cols].head(100),
-            use_container_width=True,
-            height=400
-        )
-        
-        # ------------------------
-        # خيارات التصدير
-        # ------------------------
-        st.header("💾 حفظ النتائج")
-        
-        col_f, col_g = st.columns(2)
-        
-        with col_f:
-            # تصدير إلى Excel
-            if st.button("📥 حفظ إلى Excel", use_container_width=True):
-                try:
-                    output_path = "fault_analysis_results.xlsx"
-                    failures.to_excel(output_path, index=False)
-                    st.success(f"تم الحفظ بنجاح: {output_path}")
+        # زر الحساب للمجموعة
+        if st.button("🧮 حساب مدة توقف المجموعة", type="primary", key="calculate_group"):
+            with st.spinner("جاري حساب مدة توقف المجموعة..."):
+                if selected_events:
+                    total_minutes, event_count, periods = calculate_group_downtime(df, selected_events, reference_event)
                     
-                    # عرض رابط التحميل
-                    with open(output_path, "rb") as file:
-                        st.download_button(
-                            label="📥 تنزيل الملف",
-                            data=file,
-                            file_name="fault_analysis_results.xlsx",
-                            mime="application/vnd.ms-excel"
-                        )
-                except Exception as e:
-                    st.error(f"خطأ في الحفظ: {e}")
+                    if event_count > 0:
+                        if periods:
+                            # عرض النتائج
+                            events_str = ", ".join(selected_events)
+                            st.markdown(f"""
+                            <div class="highlight-box">
+                                <h2>📊 نتائج حساب توقف المجموعة</h2>
+                                <h3>إجمالي مدة التوقف: <span style="color: #FFD700">{total_minutes:.2f} دقيقة</span></h3>
+                                <p>عدد مرات التوقف: {event_count} مرة</p>
+                                <p>متوسط مدة التوقف: {total_minutes/event_count:.2f} دقيقة</p>
+                                <p>الأحداث المختارة: {events_str}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            # تحويل المدة إلى ساعات وأيام
+                            hours = total_minutes / 60
+                            days = hours / 24
+                            
+                            # عرض بتنسيق جميل
+                            col_a, col_b, col_c = st.columns(3)
+                            
+                            with col_a:
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الدقائق**")
+                                st.markdown(f"# {total_minutes:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            with col_b:
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الساعات**")
+                                st.markdown(f"# {hours:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            with col_c:
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الأيام**")
+                                st.markdown(f"# {days:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
+                            
+                            # عرض تفاصيل فترات التوقف
+                            st.subheader("📋 تفاصيل فترات التوقف")
+                            
+                            if periods:
+                                periods_df = pd.DataFrame(periods)
+                                st.dataframe(
+                                    periods_df,
+                                    use_container_width=True,
+                                    column_config={
+                                        "بداية التوقف": st.column_config.DatetimeColumn("بداية التوقف"),
+                                        "نهاية التوقف": st.column_config.DatetimeColumn("نهاية التوقف"),
+                                        "المدة (دقائق)": st.column_config.NumberColumn("المدة (دقائق)", format="%.2f"),
+                                        "الحدث": st.column_config.TextColumn("الحدث"),
+                                        "التفاصيل": st.column_config.TextColumn("التفاصيل", width="large")
+                                    }
+                                )
+                        else:
+                            st.warning(f"⚠️ تم العثور على {event_count} حدث من المجموعة المختارة ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
+                    else:
+                        st.error(f"❌ لم يتم العثور على أي حدث من المجموعة المختارة في البيانات.")
+                else:
+                    st.warning("⚠️ يرجى اختيار حدث واحد على الأقل من القائمة.")
+
+with tab4:
+    st.header("📥 خيارات التصدير")
+    
+    st.info("""
+    يمكنك تصدير البيانات المصفاة إلى عدة صيغ مختلفة.
+    اختر الصيغة المناسبة واحفظ البيانات على جهازك.
+    """)
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.markdown("### 📄 Excel")
+        st.markdown("صيغة جدول بيانات متقدمة")
         
-        with col_g:
-            # تصدير إلى CSV
-            if st.button("📊 حفظ إلى CSV", use_container_width=True):
-                try:
-                    output_path = "fault_analysis_results.csv"
-                    failures.to_csv(output_path, index=False, encoding='utf-8-sig')
-                    st.success(f"تم الحفظ بنجاح: {output_path}")
-                    
-                    with open(output_path, "rb") as file:
-                        st.download_button(
-                            label="📥 تنزيل الملف",
-                            data=file,
-                            file_name="fault_analysis_results.csv",
-                            mime="text/csv"
-                        )
-                except Exception as e:
-                    st.error(f"خطأ في الحفظ: {e}")
+        # زر التصدير إلى Excel
+        if st.button("💾 تصدير إلى Excel", use_container_width=True, key="export_excel_main"):
+            try:
+                download_link = convert_to_excel_download(df_filtered, "data_export.xlsx")
+                if download_link:
+                    st.markdown(download_link, unsafe_allow_html=True)
+                    st.success("✅ تم تجهيز ملف Excel للتحميل")
+            except Exception as e:
+                st.error(f"❌ خطأ في تصدير Excel: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+        st.markdown("### 📊 CSV")
+        st.markdown("صيغة نصية بسيطة")
         
-        # ------------------------
-        # تصور بياني
-        # ------------------------
-        st.header("📊 تصور بياني للبيانات")
-        
-        if len(failures) > 1:
-            tab1, tab2, tab3 = st.tabs(["أوقات الإصلاح", "الوقت بين الأعطال", "توزيع الأعطال"])
-            
-            with tab1:
-                if not failures['Repair_Min'].isna().all():
-                    st.bar_chart(failures.set_index('DateTime')['Repair_Min'])
-            
-            with tab2:
-                if 'Time_Between_Min' in failures.columns and not failures['Time_Between_Min'].isna().all():
-                    st.line_chart(failures.set_index('DateTime')['Time_Between_Min'])
-            
-            with tab3:
-                # توزيع الأعطال على مدار اليوم
-                failures['Hour'] = pd.to_datetime(failures['DateTime']).dt.hour
-                hourly_counts = failures['Hour'].value_counts().sort_index()
-                st.bar_chart(hourly_counts)
+        # زر التصدير إلى CSV
+        if st.button("📊 تصدير إلى CSV", use_container_width=True, key="export_csv_main"):
+            try:
+                csv_data = df_filtered.to_csv(index=False, encoding='utf-8-sig')
+                b64 = base64.b64encode(csv_data.encode('utf-8-sig')).decode()
+                href = f'<a href="data:text/csv;charset=utf-8-sig;base64,{b64}" download="data_export.csv">📥 انقر للتحميل</a>'
+                st.markdown(href, unsafe_allow_html=True)
+                st.success("✅ تم تجهيز ملف CSV للتحميل")
+            except Exception as e:
+                st.error(f"❌ خطأ في تصدير CSV: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # إحصائيات التصدير
+    st.markdown("### 📈 ملخص البيانات المصدَّرة")
+    st.write(f"**عدد السجلات:** {len(df_filtered):,}")
+    st.write(f"**عدد الأعمدة:** {len(df_filtered.columns)}")
+    
+    # عرض أسماء الأعمدة
+    if len(df_filtered.columns) > 0:
+        st.write(f"**الأعمدة:** {', '.join(df_filtered.columns.tolist())}")
+    
+    # معاينة البيانات قبل التصدير
+    with st.expander("👁️ معاينة البيانات قبل التصدير"):
+        if len(df_filtered) > 0:
+            st.dataframe(df_filtered.head(10), use_container_width=True)
+        else:
+            st.info("لا توجد بيانات للمعاينة")
+
+# تذييل الصفحة
+st.markdown("---")
+st.markdown("""
+<div style="text-align: center; color: #666; padding: 20px;">
+    <p>📋 نظام عرض وتحليل بيانات السجل التقني | إصدار 3.0</p>
+    <p>تم التطوير باستخدام Streamlit | للاستخدام التقني والتحليلي</p>
+</div>
+""", unsafe_allow_html=True)
