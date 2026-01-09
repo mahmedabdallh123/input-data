@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 from datetime import timedelta
 from io import BytesIO
 import base64
@@ -46,6 +45,13 @@ st.markdown("""
     .sidebar .sidebar-content {
         background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
     }
+    .downtime-card {
+        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        color: white;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -54,7 +60,6 @@ st.markdown('<div class="main-header"><h1>📋 نظام عرض وتحليل بي
 
 # الشريط الجانبي
 with st.sidebar:
-    st.image("https://img.icons8.com/color/96/000000/data-configuration.png", width=100)
     st.markdown("### ⚙️ إعدادات العرض")
     
     # خيارات عرض البيانات
@@ -62,7 +67,6 @@ with st.sidebar:
     show_raw_data = st.checkbox("عرض البيانات الخام", value=True)
     show_stats = st.checkbox("عرض الإحصائيات", value=True)
     show_downtime = st.checkbox("حساب أوقات التوقف", value=True)
-    show_charts = st.checkbox("عرض الرسوم البيانية", value=True)
     
     st.markdown("---")
     st.markdown("#### معلومات:")
@@ -71,7 +75,6 @@ with st.sidebar:
     - عرض كامل للبيانات
     - إحصائيات تفصيلية
     - حساب أوقات التوقف
-    - تصورات بيانية
     - تصدير للعديد من الصيغ
     """)
 
@@ -197,7 +200,7 @@ if 'DateTime' not in df.columns and 'Date' in df.columns and 'Time' in df.column
         df['DateTime'] = pd.to_datetime(df['Date'])
 
 # قسم العرض الرئيسي
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 عرض البيانات", "📊 الإحصائيات", "⏱ حساب التوقف", "📈 الرسوم البيانية", "📥 التصدير"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 عرض البيانات", "📊 الإحصائيات", "⏱ حساب التوقف", "📥 التصدير"])
 
 with tab1:
     st.header("📋 عرض البيانات التفصيلي")
@@ -284,6 +287,8 @@ with tab2:
     st.header("📊 الإحصائيات التحليلية")
     
     if len(df_filtered) > 0:
+        # مؤشرات سريعة
+        st.subheader("📈 مؤشرات سريعة")
         col1, col2, col3 = st.columns(3)
         
         with col1:
@@ -311,22 +316,25 @@ with tab2:
             event_stats = df_filtered['Event'].value_counts().reset_index()
             event_stats.columns = ['الحدث', 'التكرار']
             
-            col4, col5 = st.columns([3, 2])
+            # عرض جدول التكرارات
+            st.dataframe(
+                event_stats,
+                use_container_width=True,
+                height=400
+            )
             
-            with col4:
-                st.dataframe(
-                    event_stats,
-                    use_container_width=True,
-                    height=400
-                )
+            # عرض إجماليات
+            st.subheader("📊 إجماليات الأحداث")
             
-            with col5:
-                # رسم بياني دائري بسيط
-                fig, ax = plt.subplots()
-                top_events = event_stats.head(10)
-                ax.pie(top_events['التكرار'], labels=top_events['الحدث'], autopct='%1.1f%%')
-                ax.set_title("توزيع أهم 10 أحداث")
-                st.pyplot(fig)
+            # أعلى 5 أحداث
+            top_5_events = event_stats.head(5)
+            for idx, row in top_5_events.iterrows():
+                st.markdown(f"""
+                <div class="metric-card">
+                    <strong>{row['الحدث']}</strong>: {row['التكرار']} مرة 
+                    ({row['التكرار']/len(df_filtered)*100:.1f}% من إجمالي الأحداث)
+                </div>
+                """, unsafe_allow_html=True)
         
         # إحصائيات زمنية
         if 'DateTime' in df_filtered.columns:
@@ -337,22 +345,32 @@ with tab2:
             df_filtered['DayOfWeek'] = df_filtered['DateTime'].dt.day_name()
             df_filtered['Month'] = df_filtered['DateTime'].dt.month_name()
             
-            col6, col7, col8 = st.columns(3)
+            col4, col5, col6 = st.columns(3)
+            
+            with col4:
+                st.markdown("**التوزيع على مدار الساعة**")
+                hourly_stats = df_filtered['Hour'].value_counts().sort_index()
+                st.dataframe(hourly_stats, height=200)
+            
+            with col5:
+                st.markdown("**التوزيع على أيام الأسبوع**")
+                daily_stats = df_filtered['DayOfWeek'].value_counts()
+                st.dataframe(daily_stats, height=200)
             
             with col6:
-                hourly_stats = df_filtered['Hour'].value_counts().sort_index()
-                st.bar_chart(hourly_stats)
-                st.caption("التوزيع على مدار الساعة")
-            
-            with col7:
-                daily_stats = df_filtered['DayOfWeek'].value_counts()
-                st.bar_chart(daily_stats)
-                st.caption("التوزيع على أيام الأسبوع")
-            
-            with col8:
+                st.markdown("**التوزيع على الأشهر**")
                 monthly_stats = df_filtered['Month'].value_counts()
-                st.bar_chart(monthly_stats)
-                st.caption("التوزيع على الأشهر")
+                st.dataframe(monthly_stats, height=200)
+        
+        # البحث في التفاصيل
+        if 'Details' in df_filtered.columns:
+            st.subheader("🔍 البحث في التفاصيل")
+            search_term = st.text_input("ابحث في التفاصيل:")
+            
+            if search_term:
+                search_results = df_filtered[df_filtered['Details'].str.contains(search_term, case=False, na=False)]
+                st.write(f"نتائج البحث ({len(search_results)} سجل):")
+                st.dataframe(search_results.head(20), use_container_width=True)
 
 with tab3:
     st.header("⏱ حساب إجمالي مدة التوقف")
@@ -409,13 +427,22 @@ with tab3:
                             col_a, col_b, col_c = st.columns(3)
                             
                             with col_a:
-                                st.metric("إجمالي الدقائق", f"{total_minutes:.2f}")
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الدقائق**")
+                                st.markdown(f"# {total_minutes:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
                             
                             with col_b:
-                                st.metric("إجمالي الساعات", f"{hours:.2f}")
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الساعات**")
+                                st.markdown(f"# {hours:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
                             
                             with col_c:
-                                st.metric("إجمالي الأيام", f"{days:.2f}")
+                                st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                st.markdown(f"**إجمالي الأيام**")
+                                st.markdown(f"# {days:.2f}")
+                                st.markdown('</div>', unsafe_allow_html=True)
                             
                             # عرض تفاصيل فترات التوقف
                             st.subheader("📋 تفاصيل فترات التوقف")
@@ -434,17 +461,23 @@ with tab3:
                                     }
                                 )
                                 
-                                # رسم بياني لفترات التوقف
-                                st.subheader("📈 توزيع فترات التوقف")
+                                # ملخص فترات التوقف
+                                st.subheader("📊 ملخص فترات التوقف")
                                 
-                                if len(periods_df) > 0:
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    ax.bar(range(len(periods_df)), periods_df['المدة (دقائق)'])
-                                    ax.set_xlabel('رقم فترة التوقف')
-                                    ax.set_ylabel('المدة (دقائق)')
-                                    ax.set_title(f"فترات التوقف لحدث: {selected_event}")
-                                    ax.grid(True, alpha=0.3)
-                                    st.pyplot(fig)
+                                min_duration = periods_df['المدة (دقائق)'].min()
+                                max_duration = periods_df['المدة (دقائق)'].max()
+                                avg_duration = periods_df['المدة (دقائق)'].mean()
+                                
+                                col_d, col_e, col_f = st.columns(3)
+                                
+                                with col_d:
+                                    st.metric("أقل مدة توقف", f"{min_duration:.2f} دقيقة")
+                                
+                                with col_e:
+                                    st.metric("أكثر مدة توقف", f"{max_duration:.2f} دقيقة")
+                                
+                                with col_f:
+                                    st.metric("المتوسط", f"{avg_duration:.2f} دقيقة")
                         else:
                             st.warning(f"⚠️ تم العثور على {event_count} حدث من نوع '{selected_event}' ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
                     else:
@@ -506,13 +539,22 @@ with tab3:
                                 col_a, col_b, col_c = st.columns(3)
                                 
                                 with col_a:
-                                    st.metric("إجمالي الدقائق", f"{total_minutes:.2f}")
+                                    st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                    st.markdown(f"**إجمالي الدقائق**")
+                                    st.markdown(f"# {total_minutes:.2f}")
+                                    st.markdown('</div>', unsafe_allow_html=True)
                                 
                                 with col_b:
-                                    st.metric("إجمالي الساعات", f"{hours:.2f}")
+                                    st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                    st.markdown(f"**إجمالي الساعات**")
+                                    st.markdown(f"# {hours:.2f}")
+                                    st.markdown('</div>', unsafe_allow_html=True)
                                 
                                 with col_c:
-                                    st.metric("إجمالي الأيام", f"{days:.2f}")
+                                    st.markdown('<div class="downtime-card">', unsafe_allow_html=True)
+                                    st.markdown(f"**إجمالي الأيام**")
+                                    st.markdown(f"# {days:.2f}")
+                                    st.markdown('</div>', unsafe_allow_html=True)
                                 
                                 # عرض تفاصيل فترات التوقف
                                 st.subheader("📋 تفاصيل فترات التوقف")
@@ -531,8 +573,8 @@ with tab3:
                                         }
                                     )
                                     
-                                    # رسم بياني لفترات التوقف حسب النوع
-                                    st.subheader("📈 توزيع فترات التوقف حسب الحدث")
+                                    # تحليل حسب الحدث
+                                    st.subheader("📊 تحليل التوقف حسب الحدث")
                                     
                                     if len(periods_df) > 0:
                                         # تجميع حسب الحدث
@@ -541,27 +583,26 @@ with tab3:
                                             'بداية التوقف': 'count'
                                         }).rename(columns={'بداية التوقف': 'عدد المرات'}).reset_index()
                                         
-                                        # رسم بياني شريطي
-                                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+                                        st.dataframe(
+                                            event_summary,
+                                            use_container_width=True,
+                                            column_config={
+                                                "الحدث": st.column_config.TextColumn("الحدث"),
+                                                "المدة (دقائق)": st.column_config.NumberColumn("المدة (دقائق)", format="%.2f"),
+                                                "عدد المرات": st.column_config.NumberColumn("عدد المرات")
+                                            }
+                                        )
                                         
-                                        # الرسم البياني الأول: إجمالي مدة التوقف
-                                        ax1.bar(event_summary['الحدث'], event_summary['المدة (دقائق)'])
-                                        ax1.set_xlabel('الحدث')
-                                        ax1.set_ylabel('المدة (دقائق)')
-                                        ax1.set_title("إجمالي مدة التوقف لكل حدث")
-                                        ax1.tick_params(axis='x', rotation=45)
-                                        ax1.grid(True, alpha=0.3)
-                                        
-                                        # الرسم البياني الثاني: عدد المرات
-                                        ax2.bar(event_summary['الحدث'], event_summary['عدد المرات'])
-                                        ax2.set_xlabel('الحدث')
-                                        ax2.set_ylabel('عدد المرات')
-                                        ax2.set_title("عدد مرات التوقف لكل حدث")
-                                        ax2.tick_params(axis='x', rotation=45)
-                                        ax2.grid(True, alpha=0.3)
-                                        
-                                        plt.tight_layout()
-                                        st.pyplot(fig)
+                                        # حساب النسب المئوية
+                                        for idx, row in event_summary.iterrows():
+                                            percentage = (row['المدة (دقائق)'] / total_minutes) * 100
+                                            st.markdown(f"""
+                                            <div class="metric-card">
+                                                <strong>{row['الحدث']}</strong>
+                                                <br>المدة: {row['المدة (دقائق)']:.2f} دقيقة ({percentage:.1f}%)
+                                                <br>المرات: {row['عدد المرات']} مرة
+                                            </div>
+                                            """, unsafe_allow_html=True)
                             else:
                                 st.warning(f"⚠️ تم العثور على {event_count} حدث من المجموعة المختارة ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
                         else:
@@ -571,92 +612,87 @@ with tab3:
         
         else:
             st.warning("⚠️ البيانات لا تحتوي على عمود 'Event' لحساب التوقف.")
+    
+    # قسم التحليل المتقدم
+    st.markdown("---")
+    st.subheader("🔍 تحليل متقدم لأوقات التوقف")
+    
+    if 'Event' in df.columns and 'DateTime' in df.columns:
+        # اختيار نطاق زمني للتحليل
+        st.markdown("### تحليل التوقف خلال فترة محددة")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            min_date = df['DateTime'].min().date()
+            max_date = df['DateTime'].max().date()
+            
+            analysis_start = st.date_input(
+                "بداية فترة التحليل:",
+                value=min_date,
+                min_value=min_date,
+                max_value=max_date,
+                key="analysis_start"
+            )
+        
+        with col2:
+            analysis_end = st.date_input(
+                "نهاية فترة التحليل:",
+                value=max_date,
+                min_value=min_date,
+                max_value=max_date,
+                key="analysis_end"
+            )
+        
+        # تحويل التواريخ إلى datetime
+        analysis_start_dt = pd.Timestamp(analysis_start)
+        analysis_end_dt = pd.Timestamp(analysis_end) + pd.Timedelta(days=1)
+        
+        # تصفية البيانات للنطاق الزمني
+        df_filtered_time = df[(df['DateTime'] >= analysis_start_dt) & (df['DateTime'] <= analysis_end_dt)]
+        
+        if st.button("📈 تحليل التوقف خلال الفترة", key="analyze_period"):
+            if len(df_filtered_time) > 0:
+                # حساب التوقف لجميع الأحداث في الفترة
+                all_events_in_period = df_filtered_time['Event'].dropna().unique().tolist()
+                
+                downtime_summary = []
+                
+                for event in all_events_in_period[:10]:  # تحليل أول 10 أحداث فقط
+                    minutes, count, _ = calculate_downtime(df_filtered_time, event)
+                    if count > 0 and minutes > 0:
+                        downtime_summary.append({
+                            'الحدث': event,
+                            'عدد المرات': count,
+                            'إجمالي الدقائق': minutes,
+                            'إجمالي الساعات': minutes / 60,
+                            'المتوسط (دقائق)': minutes / count
+                        })
+                
+                if downtime_summary:
+                    summary_df = pd.DataFrame(downtime_summary).sort_values('إجمالي الدقائق', ascending=False)
+                    
+                    st.success(f"📊 تحليل التوقف للفترة من {analysis_start} إلى {analysis_end}")
+                    st.dataframe(summary_df, use_container_width=True)
+                    
+                    # عرض أعلى 5 أحداث
+                    st.subheader("🏆 أعلى 5 أحداث توقف")
+                    top_events = summary_df.head(5)
+                    
+                    for idx, row in top_events.iterrows():
+                        st.markdown(f"""
+                        <div class="metric-card">
+                            <h4>{row['الحدث']}</h4>
+                            <p>إجمالي التوقف: {row['إجمالي الدقائق']:.2f} دقيقة ({row['إجمالي الساعات']:.2f} ساعة)</p>
+                            <p>عدد المرات: {row['عدد المرات']} | المتوسط: {row['المتوسط (دقائق)']:.2f} دقيقة</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("📭 لم يتم العثور على أي أحداث توقف قابلة للحساب خلال الفترة المحددة.")
+            else:
+                st.warning("⚠️ لا توجد بيانات خلال الفترة المحددة.")
 
 with tab4:
-    st.header("📈 الرسوم البيانية التفاعلية")
-    
-    if len(df_filtered) > 0:
-        chart_type = st.selectbox("نوع الرسم البياني:", 
-                                 ["عمودي", "دائري", "خطي", "مبعثر"])
-        
-        if 'Event' in df_filtered.columns:
-            # تحضير بيانات الأحداث
-            event_data = df_filtered['Event'].value_counts().reset_index()
-            event_data.columns = ['Event', 'Count']
-            
-            if chart_type == "عمودي":
-                st.subheader("📊 توزيع الأحداث (رسم عمودي)")
-                
-                fig, ax = plt.subplots(figsize=(10, 6))
-                bars = ax.bar(event_data.head(15)['Event'], event_data.head(15)['Count'])
-                ax.set_xlabel('الحدث')
-                ax.set_ylabel('التكرار')
-                ax.set_title("توزيع الأحداث (أعلى 15)")
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                
-                # إضافة أرقام على الأعمدة
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height,
-                            f'{int(height)}', ha='center', va='bottom')
-                
-                st.pyplot(fig)
-            
-            elif chart_type == "دائري":
-                st.subheader("📊 توزيع الأحداث (رسم دائري)")
-                
-                fig, ax = plt.subplots(figsize=(8, 8))
-                wedges, texts, autotexts = ax.pie(
-                    event_data.head(10)['Count'],
-                    labels=event_data.head(10)['Event'],
-                    autopct='%1.1f%%',
-                    startangle=90
-                )
-                ax.set_title("نسبة الأحداث (أعلى 10)")
-                st.pyplot(fig)
-            
-            elif chart_type == "خطي":
-                if 'DateTime' in df_filtered.columns:
-                    st.subheader("📈 اتجاه الأحداث عبر الزمن")
-                    
-                    timeline_data = df_filtered.groupby(df_filtered['DateTime'].dt.date).size().reset_index()
-                    timeline_data.columns = ['Date', 'Count']
-                    
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    ax.plot(timeline_data['Date'], timeline_data['Count'], marker='o')
-                    ax.set_xlabel('التاريخ')
-                    ax.set_ylabel('عدد الأحداث')
-                    ax.set_title("اتجاه الأحداث عبر الزمن")
-                    ax.grid(True, alpha=0.3)
-                    ax.tick_params(axis='x', rotation=45)
-                    st.pyplot(fig)
-            
-            elif chart_type == "مبعثر":
-                if 'DateTime' in df_filtered.columns and 'Event' in df_filtered.columns:
-                    st.subheader("📊 توزيع الأحداث خلال اليوم والشهر")
-                    
-                    scatter_data = df_filtered.copy()
-                    scatter_data['Hour'] = scatter_data['DateTime'].dt.hour
-                    scatter_data['Day'] = scatter_data['DateTime'].dt.day
-                    
-                    fig, ax = plt.subplots(figsize=(10, 6))
-                    
-                    # تلوين النقاط حسب الحدث (أول 5 أحداث فقط)
-                    events_to_plot = scatter_data['Event'].value_counts().head(5).index.tolist()
-                    
-                    for event in events_to_plot:
-                        event_data = scatter_data[scatter_data['Event'] == event]
-                        ax.scatter(event_data['Day'], event_data['Hour'], label=event, alpha=0.7)
-                    
-                    ax.set_xlabel('يوم الشهر')
-                    ax.set_ylabel('ساعة اليوم')
-                    ax.set_title("توزيع الأحداث خلال اليوم والشهر")
-                    ax.legend()
-                    ax.grid(True, alpha=0.3)
-                    st.pyplot(fig)
-
-with tab5:
     st.header("📥 خيارات التصدير")
     
     st.info("""
@@ -723,7 +759,7 @@ with tab5:
 st.markdown("---")
 st.markdown("""
 <div style="text-align: center; color: #666; padding: 20px;">
-    <p>📋 نظام عرض بيانات السجل التقني | إصدار 1.0</p>
+    <p>📋 نظام عرض وتحليل بيانات السجل التقني | إصدار 1.0</p>
     <p>تم التطوير باستخدام Streamlit | للاستخدام التقني والتحليلي</p>
 </div>
 """, unsafe_allow_html=True)
