@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
-from datetime import timedelta
+import plotly.express as px
+import plotly.graph_objects as go
 from io import BytesIO
 import base64
 
@@ -35,14 +35,6 @@ st.markdown("""
         box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         margin: 10px 0;
     }
-    .highlight-box {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 20px;
-        border-radius: 10px;
-        text-align: center;
-        margin: 10px 0;
-    }
     .sidebar .sidebar-content {
         background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
     }
@@ -50,7 +42,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # عنوان التطبيق
-st.markdown('<div class="main-header"><h1>📋 نظام عرض وتحليل بيانات السجل التقني</h1><h3>عرض وتحليل بيانات أعطال المعدات + حساب أوقات التوقف</h3></div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header"><h1>📋 نظام عرض بيانات السجل التقني</h1><h3>عرض وتحليل بيانات أعطال المعدات</h3></div>', unsafe_allow_html=True)
 
 # الشريط الجانبي
 with st.sidebar:
@@ -61,8 +53,14 @@ with st.sidebar:
     st.markdown("#### خيارات البيانات:")
     show_raw_data = st.checkbox("عرض البيانات الخام", value=True)
     show_stats = st.checkbox("عرض الإحصائيات", value=True)
-    show_downtime = st.checkbox("حساب أوقات التوقف", value=True)
     show_charts = st.checkbox("عرض الرسوم البيانية", value=True)
+    
+    st.markdown("---")
+    st.markdown("#### تصفية البيانات:")
+    
+    # زر إعادة تحميل البيانات
+    if st.button("🔄 تحديث البيانات", use_container_width=True):
+        st.rerun()
     
     st.markdown("---")
     st.markdown("#### معلومات:")
@@ -70,124 +68,44 @@ with st.sidebar:
     **مميزات التطبيق:**
     - عرض كامل للبيانات
     - إحصائيات تفصيلية
-    - حساب أوقات التوقف
-    - تصورات بيانية
+    - تصورات بيانية متقدمة
     - تصدير للعديد من الصيغ
     """)
 
-# دالة لتحميل البيانات
+# دالة لتحميل البيانات من GitHub
 @st.cache_data
-def load_data():
+def load_data_from_github():
     """
-    تحميل البيانات من ملف Excel
+    تحميل البيانات من GitHub أو المسار المحلي
     """
     try:
-        # جرب تحميل من مسار محدد
-        df = pd.read_excel("organized_logbook.xlsx")
-        st.sidebar.success("✅ تم تحميل البيانات بنجاح")
+        # حاول تحميل من GitHub أولاً
+        github_url = "https://raw.githubusercontent.com/username/repo/main/organized_logbook.xlsx"
+        df = pd.read_excel(github_url)
+        st.sidebar.success("✅ تم تحميل البيانات من GitHub")
         return df
-    except Exception as e:
-        st.sidebar.error(f"❌ خطأ في تحميل البيانات: {e}")
-        # إنشاء بيانات تجريبية للعرض
-        sample_data = {
-            "Date": pd.date_range(start="2024-01-01", periods=100, freq='H'),
-            "Time": [f"{i%24:02d}:{(i*30)%60:02d}" for i in range(100)],
-            "Event": ["Automatic mode", "Manual mode", "Error 001", "Maintenance", 
-                     "System Reset", "Error 002", "Calibration", "Error 003"] * 12 + ["Automatic mode", "Manual mode"],
-            "Details": [f"Detail {i}" for i in range(100)]
-        }
-        df = pd.DataFrame(sample_data)
-        st.sidebar.warning("⚠️ يتم عرض بيانات تجريبية")
-        return df
-
-# دالة لحساب مدة التوقف
-def calculate_downtime(df, event_name, reference_event="Automatic mode"):
-    """
-    حساب إجمالي مدة التوقف لحدث معين
-    """
-    if 'DateTime' not in df.columns:
-        return 0, 0, []
-    
-    # فرز البيانات حسب الوقت
-    df = df.sort_values('DateTime').reset_index(drop=True)
-    
-    # البحث عن أحداث التوقف وأحداث المرجع
-    downtime_events = df[df['Event'].str.contains(event_name, case=False, na=False)]
-    reference_events = df[df['Event'].str.contains(reference_event, case=False, na=False)]
-    
-    if len(downtime_events) == 0 or len(reference_events) == 0:
-        return 0, len(downtime_events), []
-    
-    # حساب مدة كل توقف
-    downtime_periods = []
-    total_downtime = timedelta()
-    
-    for idx, event in downtime_events.iterrows():
-        # البحث عن أقرب حدث مرجعي بعد حدث التوقف
-        next_ref = reference_events[reference_events['DateTime'] > event['DateTime']]
-        
-        if not next_ref.empty:
-            downtime_start = event['DateTime']
-            downtime_end = next_ref.iloc[0]['DateTime']
-            duration = downtime_end - downtime_start
-            
-            downtime_periods.append({
-                'بداية التوقف': downtime_start,
-                'نهاية التوقف': downtime_end,
-                'المدة (دقائق)': duration.total_seconds() / 60,
-                'الحدث': event['Event'],
-                'التفاصيل': event.get('Details', '')
-            })
-            
-            total_downtime += duration
-    
-    return total_downtime.total_seconds() / 60, len(downtime_events), downtime_periods
-
-# دالة لحساب مدة التوقف لمجموعة أحداث
-def calculate_group_downtime(df, event_list, reference_event="Automatic mode"):
-    """
-    حساب إجمالي مدة التوقف لمجموعة أحداث
-    """
-    if 'DateTime' not in df.columns:
-        return 0, 0, []
-    
-    # فرز البيانات حسب الوقت
-    df = df.sort_values('DateTime').reset_index(drop=True)
-    
-    # البحث عن أحداث التوقف (أي من الأحداث في القائمة)
-    downtime_events = df[df['Event'].apply(lambda x: any(event in str(x) for event in event_list))]
-    reference_events = df[df['Event'].str.contains(reference_event, case=False, na=False)]
-    
-    if len(downtime_events) == 0 or len(reference_events) == 0:
-        return 0, len(downtime_events), []
-    
-    # حساب مدة كل توقف
-    downtime_periods = []
-    total_downtime = timedelta()
-    
-    for idx, event in downtime_events.iterrows():
-        # البحث عن أقرب حدث مرجعي بعد حدث التوقف
-        next_ref = reference_events[reference_events['DateTime'] > event['DateTime']]
-        
-        if not next_ref.empty:
-            downtime_start = event['DateTime']
-            downtime_end = next_ref.iloc[0]['DateTime']
-            duration = downtime_end - downtime_start
-            
-            downtime_periods.append({
-                'بداية التوقف': downtime_start,
-                'نهاية التوقف': downtime_end,
-                'المدة (دقائق)': duration.total_seconds() / 60,
-                'الحدث': event['Event'],
-                'التفاصيل': event.get('Details', '')
-            })
-            
-            total_downtime += duration
-    
-    return total_downtime.total_seconds() / 60, len(downtime_events), downtime_periods
+    except:
+        try:
+            # إذا فشل، جرب المسار المحلي
+            df = pd.read_excel("organized_logbook.xlsx")
+            st.sidebar.success("✅ تم تحميل البيانات من الملف المحلي")
+            return df
+        except Exception as e:
+            st.sidebar.error(f"❌ لم يتم العثور على ملف البيانات: {e}")
+            # إنشاء بيانات تجريبية للعرض
+            sample_data = {
+                "Date": pd.date_range(start="2024-01-01", periods=100, freq='H'),
+                "Time": [f"{i%24:02d}:{(i*30)%60:02d}" for i in range(100)],
+                "Event": ["Automatic mode", "Manual mode", "Error 001", "Maintenance", 
+                         "System Reset", "Error 002", "Calibration", "Error 003"] * 12 + ["Automatic mode", "Manual mode"],
+                "Details": [f"Detail {i}" for i in range(100)]
+            }
+            df = pd.DataFrame(sample_data)
+            st.sidebar.warning("⚠️ يتم عرض بيانات تجريبية")
+            return df
 
 # تحميل البيانات
-df = load_data()
+df = load_data_from_github()
 
 # تحضير البيانات
 if 'DateTime' not in df.columns and 'Date' in df.columns and 'Time' in df.columns:
@@ -197,7 +115,7 @@ if 'DateTime' not in df.columns and 'Date' in df.columns and 'Time' in df.column
         df['DateTime'] = pd.to_datetime(df['Date'])
 
 # قسم العرض الرئيسي
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 عرض البيانات", "📊 الإحصائيات", "⏱ حساب التوقف", "📈 الرسوم البيانية", "📥 التصدير"])
+tab1, tab2, tab3, tab4 = st.tabs(["📋 عرض البيانات", "📊 الإحصائيات", "📈 الرسوم البيانية", "📥 التصدير"])
 
 with tab1:
     st.header("📋 عرض البيانات التفصيلي")
@@ -321,12 +239,14 @@ with tab2:
                 )
             
             with col5:
-                # رسم بياني دائري بسيط
-                fig, ax = plt.subplots()
-                top_events = event_stats.head(10)
-                ax.pie(top_events['التكرار'], labels=top_events['الحدث'], autopct='%1.1f%%')
-                ax.set_title("توزيع أهم 10 أحداث")
-                st.pyplot(fig)
+                fig_pie = px.pie(
+                    event_stats.head(10),
+                    values='التكرار',
+                    names='الحدث',
+                    title="توزيع أهم 10 أحداث"
+                )
+                fig_pie.update_layout(height=400)
+                st.plotly_chart(fig_pie, use_container_width=True)
         
         # إحصائيات زمنية
         if 'DateTime' in df_filtered.columns:
@@ -353,231 +273,31 @@ with tab2:
                 monthly_stats = df_filtered['Month'].value_counts()
                 st.bar_chart(monthly_stats)
                 st.caption("التوزيع على الأشهر")
+        
+        # جدول تفصيلي للإحصائيات
+        st.subheader("📈 الإحصائيات الوصفية")
+        
+        if 'DateTime' in df_filtered.columns:
+            time_stats = df_filtered['DateTime'].describe()
+            st.write("الإحصائيات الزمنية:")
+            st.write(time_stats)
+        
+        # البحث في التفاصيل
+        if 'Details' in df_filtered.columns:
+            st.subheader("🔍 البحث في التفاصيل")
+            search_term = st.text_input("ابحث في التفاصيل:")
+            
+            if search_term:
+                search_results = df_filtered[df_filtered['Details'].str.contains(search_term, case=False, na=False)]
+                st.write(f"نتائج البحث ({len(search_results)} سجل):")
+                st.dataframe(search_results.head(20), use_container_width=True)
 
 with tab3:
-    st.header("⏱ حساب إجمالي مدة التوقف")
-    
-    # قسمين: لحساب توقف حدث واحد و لمجموعة أحداث
-    downtime_tab1, downtime_tab2 = st.tabs(["📊 توقف حدث واحد", "📈 توقف مجموعة أحداث"])
-    
-    with downtime_tab1:
-        st.markdown("### حساب مدة التوقف لحدث معين")
-        
-        if 'Event' in df.columns:
-            # اختيار الحدث
-            all_events = sorted(df['Event'].dropna().unique().tolist())
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                selected_event = st.selectbox(
-                    "اختر حدث التوقف:",
-                    options=all_events,
-                    key="single_event_select"
-                )
-            
-            with col2:
-                reference_event = st.selectbox(
-                    "اختر حدث التشغيل (المرجع):",
-                    options=all_events,
-                    index=all_events.index('Automatic mode') if 'Automatic mode' in all_events else 0,
-                    key="single_ref_select"
-                )
-            
-            # زر الحساب
-            if st.button("🧮 حساب مدة التوقف", type="primary", key="calculate_single"):
-                with st.spinner("جاري حساب مدة التوقف..."):
-                    total_minutes, event_count, periods = calculate_downtime(df, selected_event, reference_event)
-                    
-                    if event_count > 0:
-                        if periods:
-                            # عرض النتائج
-                            st.markdown(f"""
-                            <div class="highlight-box">
-                                <h2>📊 نتائج حساب التوقف</h2>
-                                <h3>إجمالي مدة التوقف: <span style="color: #FFD700">{total_minutes:.2f} دقيقة</span></h3>
-                                <p>عدد مرات التوقف: {event_count} مرة</p>
-                                <p>متوسط مدة التوقف: {total_minutes/event_count:.2f} دقيقة</p>
-                            </div>
-                            """, unsafe_allow_html=True)
-                            
-                            # تحويل المدة إلى ساعات وأيام
-                            hours = total_minutes / 60
-                            days = hours / 24
-                            
-                            # عرض بتنسيق جميل
-                            col_a, col_b, col_c = st.columns(3)
-                            
-                            with col_a:
-                                st.metric("إجمالي الدقائق", f"{total_minutes:.2f}")
-                            
-                            with col_b:
-                                st.metric("إجمالي الساعات", f"{hours:.2f}")
-                            
-                            with col_c:
-                                st.metric("إجمالي الأيام", f"{days:.2f}")
-                            
-                            # عرض تفاصيل فترات التوقف
-                            st.subheader("📋 تفاصيل فترات التوقف")
-                            
-                            if periods:
-                                periods_df = pd.DataFrame(periods)
-                                st.dataframe(
-                                    periods_df,
-                                    use_container_width=True,
-                                    column_config={
-                                        "بداية التوقف": st.column_config.DatetimeColumn("بداية التوقف"),
-                                        "نهاية التوقف": st.column_config.DatetimeColumn("نهاية التوقف"),
-                                        "المدة (دقائق)": st.column_config.NumberColumn("المدة (دقائق)", format="%.2f"),
-                                        "الحدث": st.column_config.TextColumn("الحدث"),
-                                        "التفاصيل": st.column_config.TextColumn("التفاصيل", width="large")
-                                    }
-                                )
-                                
-                                # رسم بياني لفترات التوقف
-                                st.subheader("📈 توزيع فترات التوقف")
-                                
-                                if len(periods_df) > 0:
-                                    fig, ax = plt.subplots(figsize=(10, 6))
-                                    ax.bar(range(len(periods_df)), periods_df['المدة (دقائق)'])
-                                    ax.set_xlabel('رقم فترة التوقف')
-                                    ax.set_ylabel('المدة (دقائق)')
-                                    ax.set_title(f"فترات التوقف لحدث: {selected_event}")
-                                    ax.grid(True, alpha=0.3)
-                                    st.pyplot(fig)
-                        else:
-                            st.warning(f"⚠️ تم العثور على {event_count} حدث من نوع '{selected_event}' ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
-                    else:
-                        st.error(f"❌ لم يتم العثور على أي حدث من نوع '{selected_event}' في البيانات.")
-        
-        else:
-            st.warning("⚠️ البيانات لا تحتوي على عمود 'Event' لحساب التوقف.")
-    
-    with downtime_tab2:
-        st.markdown("### حساب مدة التوقف لمجموعة أحداث")
-        
-        if 'Event' in df.columns:
-            # اختيار مجموعة الأحداث
-            all_events = sorted(df['Event'].dropna().unique().tolist())
-            
-            col1, col2 = st.columns([3, 1])
-            
-            with col1:
-                selected_events = st.multiselect(
-                    "اختر مجموعة أحداث التوقف:",
-                    options=all_events,
-                    default=all_events[:2] if len(all_events) >= 2 else all_events,
-                    key="group_events_select"
-                )
-            
-            with col2:
-                reference_event = st.selectbox(
-                    "اختر حدث التشغيل (المرجع):",
-                    options=all_events,
-                    index=all_events.index('Automatic mode') if 'Automatic mode' in all_events else 0,
-                    key="group_ref_select"
-                )
-            
-            # زر الحساب للمجموعة
-            if st.button("🧮 حساب مدة توقف المجموعة", type="primary", key="calculate_group"):
-                with st.spinner("جاري حساب مدة توقف المجموعة..."):
-                    if selected_events:
-                        total_minutes, event_count, periods = calculate_group_downtime(df, selected_events, reference_event)
-                        
-                        if event_count > 0:
-                            if periods:
-                                # عرض النتائج
-                                events_str = ", ".join(selected_events)
-                                st.markdown(f"""
-                                <div class="highlight-box">
-                                    <h2>📊 نتائج حساب توقف المجموعة</h2>
-                                    <h3>إجمالي مدة التوقف: <span style="color: #FFD700">{total_minutes:.2f} دقيقة</span></h3>
-                                    <p>عدد مرات التوقف: {event_count} مرة</p>
-                                    <p>متوسط مدة التوقف: {total_minutes/event_count:.2f} دقيقة</p>
-                                    <p>الأحداث المختارة: {events_str}</p>
-                                </div>
-                                """, unsafe_allow_html=True)
-                                
-                                # تحويل المدة إلى ساعات وأيام
-                                hours = total_minutes / 60
-                                days = hours / 24
-                                
-                                # عرض بتنسيق جميل
-                                col_a, col_b, col_c = st.columns(3)
-                                
-                                with col_a:
-                                    st.metric("إجمالي الدقائق", f"{total_minutes:.2f}")
-                                
-                                with col_b:
-                                    st.metric("إجمالي الساعات", f"{hours:.2f}")
-                                
-                                with col_c:
-                                    st.metric("إجمالي الأيام", f"{days:.2f}")
-                                
-                                # عرض تفاصيل فترات التوقف
-                                st.subheader("📋 تفاصيل فترات التوقف")
-                                
-                                if periods:
-                                    periods_df = pd.DataFrame(periods)
-                                    st.dataframe(
-                                        periods_df,
-                                        use_container_width=True,
-                                        column_config={
-                                            "بداية التوقف": st.column_config.DatetimeColumn("بداية التوقف"),
-                                            "نهاية التوقف": st.column_config.DatetimeColumn("نهاية التوقف"),
-                                            "المدة (دقائق)": st.column_config.NumberColumn("المدة (دقائق)", format="%.2f"),
-                                            "الحدث": st.column_config.TextColumn("الحدث"),
-                                            "التفاصيل": st.column_config.TextColumn("التفاصيل", width="large")
-                                        }
-                                    )
-                                    
-                                    # رسم بياني لفترات التوقف حسب النوع
-                                    st.subheader("📈 توزيع فترات التوقف حسب الحدث")
-                                    
-                                    if len(periods_df) > 0:
-                                        # تجميع حسب الحدث
-                                        event_summary = periods_df.groupby('الحدث').agg({
-                                            'المدة (دقائق)': 'sum',
-                                            'بداية التوقف': 'count'
-                                        }).rename(columns={'بداية التوقف': 'عدد المرات'}).reset_index()
-                                        
-                                        # رسم بياني شريطي
-                                        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-                                        
-                                        # الرسم البياني الأول: إجمالي مدة التوقف
-                                        ax1.bar(event_summary['الحدث'], event_summary['المدة (دقائق)'])
-                                        ax1.set_xlabel('الحدث')
-                                        ax1.set_ylabel('المدة (دقائق)')
-                                        ax1.set_title("إجمالي مدة التوقف لكل حدث")
-                                        ax1.tick_params(axis='x', rotation=45)
-                                        ax1.grid(True, alpha=0.3)
-                                        
-                                        # الرسم البياني الثاني: عدد المرات
-                                        ax2.bar(event_summary['الحدث'], event_summary['عدد المرات'])
-                                        ax2.set_xlabel('الحدث')
-                                        ax2.set_ylabel('عدد المرات')
-                                        ax2.set_title("عدد مرات التوقف لكل حدث")
-                                        ax2.tick_params(axis='x', rotation=45)
-                                        ax2.grid(True, alpha=0.3)
-                                        
-                                        plt.tight_layout()
-                                        st.pyplot(fig)
-                            else:
-                                st.warning(f"⚠️ تم العثور على {event_count} حدث من المجموعة المختارة ولكن لا يمكن حساب مدة التوقف بسبب عدم وجود أحداث مرجعية بعدها.")
-                        else:
-                            st.error(f"❌ لم يتم العثور على أي حدث من المجموعة المختارة في البيانات.")
-                    else:
-                        st.warning("⚠️ يرجى اختيار حدث واحد على الأقل من القائمة.")
-        
-        else:
-            st.warning("⚠️ البيانات لا تحتوي على عمود 'Event' لحساب التوقف.")
-
-with tab4:
     st.header("📈 الرسوم البيانية التفاعلية")
     
     if len(df_filtered) > 0:
         chart_type = st.selectbox("نوع الرسم البياني:", 
-                                 ["عمودي", "دائري", "خطي", "مبعثر"])
+                                 ["عمودي", "خطي", "دائري", "مبعثر", "مساحي"])
         
         if 'Event' in df_filtered.columns:
             # تحضير بيانات الأحداث
@@ -585,78 +305,124 @@ with tab4:
             event_data.columns = ['Event', 'Count']
             
             if chart_type == "عمودي":
-                st.subheader("📊 توزيع الأحداث (رسم عمودي)")
-                
-                fig, ax = plt.subplots(figsize=(10, 6))
-                bars = ax.bar(event_data.head(15)['Event'], event_data.head(15)['Count'])
-                ax.set_xlabel('الحدث')
-                ax.set_ylabel('التكرار')
-                ax.set_title("توزيع الأحداث (أعلى 15)")
-                ax.tick_params(axis='x', rotation=45)
-                ax.grid(True, alpha=0.3)
-                
-                # إضافة أرقام على الأعمدة
-                for bar in bars:
-                    height = bar.get_height()
-                    ax.text(bar.get_x() + bar.get_width()/2., height,
-                            f'{int(height)}', ha='center', va='bottom')
-                
-                st.pyplot(fig)
-            
-            elif chart_type == "دائري":
-                st.subheader("📊 توزيع الأحداث (رسم دائري)")
-                
-                fig, ax = plt.subplots(figsize=(8, 8))
-                wedges, texts, autotexts = ax.pie(
-                    event_data.head(10)['Count'],
-                    labels=event_data.head(10)['Event'],
-                    autopct='%1.1f%%',
-                    startangle=90
+                fig = px.bar(
+                    event_data.head(20),
+                    x='Event',
+                    y='Count',
+                    title="توزيع الأحداث (أعلى 20)",
+                    color='Count',
+                    color_continuous_scale='viridis'
                 )
-                ax.set_title("نسبة الأحداث (أعلى 10)")
-                st.pyplot(fig)
+                fig.update_layout(xaxis_tickangle=-45)
+                st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "خطي":
                 if 'DateTime' in df_filtered.columns:
-                    st.subheader("📈 اتجاه الأحداث عبر الزمن")
-                    
                     timeline_data = df_filtered.groupby(df_filtered['DateTime'].dt.date).size().reset_index()
                     timeline_data.columns = ['Date', 'Count']
-                    
-                    fig, ax = plt.subplots(figsize=(12, 6))
-                    ax.plot(timeline_data['Date'], timeline_data['Count'], marker='o')
-                    ax.set_xlabel('التاريخ')
-                    ax.set_ylabel('عدد الأحداث')
-                    ax.set_title("اتجاه الأحداث عبر الزمن")
-                    ax.grid(True, alpha=0.3)
-                    ax.tick_params(axis='x', rotation=45)
-                    st.pyplot(fig)
+                    fig = px.line(
+                        timeline_data,
+                        x='Date',
+                        y='Count',
+                        title="اتجاه الأحداث عبر الزمن"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "دائري":
+                fig = px.pie(
+                    event_data.head(10),
+                    values='Count',
+                    names='Event',
+                    title="نسبة الأحداث (أعلى 10)",
+                    hole=0.3
+                )
+                st.plotly_chart(fig, use_container_width=True)
             
             elif chart_type == "مبعثر":
                 if 'DateTime' in df_filtered.columns and 'Event' in df_filtered.columns:
-                    st.subheader("📊 توزيع الأحداث خلال اليوم والشهر")
-                    
                     scatter_data = df_filtered.copy()
                     scatter_data['Hour'] = scatter_data['DateTime'].dt.hour
                     scatter_data['Day'] = scatter_data['DateTime'].dt.day
                     
-                    fig, ax = plt.subplots(figsize=(10, 6))
+                    fig = px.scatter(
+                        scatter_data.head(100),
+                        x='Day',
+                        y='Hour',
+                        color='Event',
+                        size=[10]*len(scatter_data.head(100)),
+                        title="توزيع الأحداث خلال اليوم والشهر"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            
+            elif chart_type == "مساحي":
+                if 'DateTime' in df_filtered.columns:
+                    area_data = df_filtered.groupby(df_filtered['DateTime'].dt.date).size().reset_index()
+                    area_data.columns = ['Date', 'Count']
+                    fig = px.area(
+                        area_data,
+                        x='Date',
+                        y='Count',
+                        title="تراكم الأحداث عبر الزمن"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        # رسم بياني تفاعلي متعدد
+        st.subheader("🎛 رسم بياني تفاعلي متعدد")
+        
+        col_x, col_y, col_color = st.columns(3)
+        
+        with col_x:
+            x_axis = st.selectbox("المحور X:", df_filtered.columns.tolist())
+        
+        with col_y:
+            y_axis = st.selectbox("المحور Y:", ['عدد السجلات'] + df_filtered.columns.tolist())
+        
+        with col_color:
+            color_by = st.selectbox("التلوين حسب:", ['لا شيء'] + df_filtered.columns.tolist())
+        
+        if st.button("إنشاء الرسم البياني", type="primary"):
+            if y_axis == 'عدد السجلات':
+                plot_data = df_filtered[x_axis].value_counts().reset_index()
+                plot_data.columns = [x_axis, 'Count']
+                
+                if color_by != 'لا شيء' and color_by in df_filtered.columns:
+                    plot_data = df_filtered.groupby([x_axis, color_by]).size().reset_index()
+                    plot_data.columns = [x_axis, color_by, 'Count']
                     
-                    # تلوين النقاط حسب الحدث (أول 5 أحداث فقط)
-                    events_to_plot = scatter_data['Event'].value_counts().head(5).index.tolist()
-                    
-                    for event in events_to_plot:
-                        event_data = scatter_data[scatter_data['Event'] == event]
-                        ax.scatter(event_data['Day'], event_data['Hour'], label=event, alpha=0.7)
-                    
-                    ax.set_xlabel('يوم الشهر')
-                    ax.set_ylabel('ساعة اليوم')
-                    ax.set_title("توزيع الأحداث خلال اليوم والشهر")
-                    ax.legend()
-                    ax.grid(True, alpha=0.3)
-                    st.pyplot(fig)
+                    fig = px.bar(
+                        plot_data,
+                        x=x_axis,
+                        y='Count',
+                        color=color_by,
+                        title=f"توزيع البيانات حسب {x_axis}"
+                    )
+                else:
+                    fig = px.bar(
+                        plot_data,
+                        x=x_axis,
+                        y='Count',
+                        title=f"توزيع البيانات حسب {x_axis}"
+                    )
+            else:
+                if color_by != 'لا شيء':
+                    fig = px.scatter(
+                        df_filtered,
+                        x=x_axis,
+                        y=y_axis,
+                        color=color_by,
+                        title=f"{y_axis} مقابل {x_axis}"
+                    )
+                else:
+                    fig = px.scatter(
+                        df_filtered,
+                        x=x_axis,
+                        y=y_axis,
+                        title=f"{y_axis} مقابل {x_axis}"
+                    )
+            
+            st.plotly_chart(fig, use_container_width=True)
 
-with tab5:
+with tab4:
     st.header("📥 خيارات التصدير")
     
     st.info("""
